@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv
+venv/
+*.db
+*.sqlite
+*.sqlite3
+.DS_Store
+nul
+{app,static,templates}

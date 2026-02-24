@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VAULT — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:#0a0a0f;--surface:#12121a;--surface2:#1a1a26;
+    --border:#252535;--accent:#c8f55a;--accent2:#5af5c8;--red:#f55a5a;
+    --text:#e8e8f0;--muted:#6b6b8a;
+    --font-display:'Syne',sans-serif;--font-mono:'JetBrains Mono',monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--text);font-family:var(--font-display);min-height:100vh;overflow-x:hidden;}
+  body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(200,245,90,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(200,245,90,0.03) 1px,transparent 1px);background-size:60px 60px;pointer-events:none;z-index:0;}
+  .app{position:relative;z-index:1;max-width:1400px;margin:0 auto;padding:0 24px;}
+
+  /* Header */
+  header{display:flex;align-items:center;justify-content:space-between;padding:28px 0 24px;border-bottom:1px solid var(--border);margin-bottom:32px;}
+  .logo{font-size:22px;font-weight:800;letter-spacing:0.15em;color:var(--accent);}
+  .logo span{color:var(--muted);font-weight:400;font-size:12px;letter-spacing:0.1em;display:block;margin-top:2px;font-family:var(--font-mono);}
+  .header-right{display:flex;align-items:center;gap:16px;}
+  .user-pill{display:flex;align-items:center;gap:10px;font-family:var(--font-mono);font-size:12px;color:var(--muted);}
+  .user-pill strong{color:var(--text);}
+  .cash-pill{background:var(--surface2);border:1px solid var(--border);padding:8px 18px;border-radius:4px;font-family:var(--font-mono);font-size:13px;cursor:pointer;transition:border-color 0.2s;}
+  .cash-pill:hover{border-color:var(--accent);}
+  .cash-pill .label{color:var(--muted);font-size:10px;letter-spacing:0.1em;}
+  .cash-pill .value{color:var(--accent);font-size:15px;font-weight:500;}
+  .logout-btn{background:none;border:1px solid var(--border);color:var(--muted);padding:8px 14px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;cursor:pointer;transition:all 0.15s;text-transform:uppercase;}
+  .logout-btn:hover{border-color:var(--red);color:var(--red);}
+
+  /* Stats */
+  .stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border:1px solid var(--border);margin-bottom:32px;animation:fadeUp 0.4s ease both;}
+  .stat-card{background:var(--surface);padding:20px 24px;position:relative;overflow:hidden;}
+  .stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform 0.4s ease;}
+  .stat-card:hover::before{transform:scaleX(1);}
+  .stat-label{font-size:10px;letter-spacing:0.15em;color:var(--muted);text-transform:uppercase;margin-bottom:8px;font-family:var(--font-mono);}
+  .stat-value{font-size:26px;font-weight:700;font-family:var(--font-mono);}
+  .stat-value.pos{color:var(--accent);}
+  .stat-value.neg{color:var(--red);}
+  .stat-sub{font-size:11px;color:var(--muted);margin-top:4px;font-family:var(--font-mono);}
+
+  /* Layout */
+  .main-grid{display:grid;grid-template-columns:1fr 360px;gap:24px;align-items:start;}
+  .panel{background:var(--surface);border:1px solid var(--border);animation:fadeUp 0.5s ease both;}
+  .panel-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);}
+  .panel-title{font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:var(--muted);font-family:var(--font-mono);}
+
+  /* Tabs */
+  .tabs{display:flex;border-bottom:1px solid var(--border);}
+  .tab{padding:12px 20px;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all 0.2s;font-family:var(--font-mono);background:none;border-top:none;border-left:none;border-right:none;}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+  .tab:hover:not(.active){color:var(--text);}
+  .tab-content{display:none;}
+  .tab-content.active{display:block;}
+
+  /* Table */
+  .holdings-table{width:100%;border-collapse:collapse;}
+  .holdings-table th{padding:10px 16px;text-align:left;font-size:10px;letter-spacing:0.12em;color:var(--muted);text-transform:uppercase;font-family:var(--font-mono);font-weight:500;border-bottom:1px solid var(--border);white-space:nowrap;}
+  .holdings-table th:last-child,.holdings-table td:last-child{text-align:right;}
+  .holdings-table td{padding:14px 16px;font-family:var(--font-mono);font-size:13px;border-bottom:1px solid rgba(37,37,53,0.5);vertical-align:middle;}
+  .holdings-table tr:last-child td{border-bottom:none;}
+  .holdings-table tr:hover td{background:rgba(255,255,255,0.02);}
+  .asset-name{font-weight:600;color:var(--text);font-family:var(--font-display);font-size:13px;}
+  .asset-type-badge{font-size:9px;padding:2px 6px;background:var(--surface2);border:1px solid var(--border);color:var(--muted);letter-spacing:0.08em;border-radius:2px;margin-left:6px;}
+  .pnl-pos{color:var(--accent);}
+  .pnl-neg{color:var(--red);}
+  .row-actions{display:flex;gap:6px;justify-content:flex-end;}
+  .action-btn{padding:5px 12px;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--muted);font-family:var(--font-mono);transition:all 0.15s;border-radius:2px;}
+  .action-btn:hover{border-color:var(--red);color:var(--red);}
+  .update-price-btn{background:none;border:none;color:var(--muted);cursor:pointer;font-family:var(--font-mono);font-size:11px;padding:0;transition:color 0.15s;text-decoration:underline;text-underline-offset:2px;}
+  .update-price-btn:hover{color:var(--accent2);}
+  .empty-state{padding:60px 20px;text-align:center;color:var(--muted);font-family:var(--font-mono);font-size:13px;}
+
+  /* Sidebar */
+  .sidebar{display:flex;flex-direction:column;gap:16px;}
+  .form-body{padding:20px;}
+  .form-group{margin-bottom:16px;}
+  label{display:block;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;font-family:var(--font-mono);}
+  input,select{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:10px 12px;font-family:var(--font-mono);font-size:13px;outline:none;transition:border-color 0.2s;-webkit-appearance:none;border-radius:0;}
+  input:focus,select:focus{border-color:var(--accent);}
+  select option{background:var(--surface2);}
+  .btn{width:100%;padding:12px;background:var(--accent);color:var(--bg);border:none;font-family:var(--font-display);font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;transition:opacity 0.2s,transform 0.1s;}
+  .btn:hover{opacity:0.9;}
+  .btn:active{transform:scale(0.99);}
+  .btn:disabled{opacity:0.5;cursor:not-allowed;}
+
+  /* Cash Widget */
+  .cash-widget{background:var(--surface);border:1px solid var(--border);padding:20px;}
+  .cash-display{font-family:var(--font-mono);font-size:32px;font-weight:500;color:var(--accent);margin:12px 0 4px;}
+  .cash-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px;}
+  .cash-btn{padding:8px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;font-family:var(--font-mono);border-radius:2px;transition:all 0.15s;}
+  .cash-btn.deposit{background:rgba(200,245,90,0.1);border:1px solid var(--accent);color:var(--accent);}
+  .cash-btn.withdraw{background:rgba(245,90,90,0.1);border:1px solid var(--red);color:var(--red);}
+  .cash-btn:hover{opacity:0.8;}
+
+  /* Transactions */
+  .tx-item{padding:12px 16px;border-bottom:1px solid rgba(37,37,53,0.5);display:flex;align-items:center;justify-content:space-between;gap:12px;font-family:var(--font-mono);font-size:12px;}
+  .tx-item:last-child{border-bottom:none;}
+  .tx-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+  .tx-dot.buy{background:var(--accent2);}
+  .tx-dot.sell{background:var(--red);}
+  .tx-dot.cash{background:var(--accent);}
+  .tx-name{color:var(--text);font-weight:500;}
+  .tx-date{color:var(--muted);font-size:10px;}
+
+  /* Modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(10,10,15,0.85);backdrop-filter:blur(4px);z-index:100;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.2s;}
+  .modal-overlay.open{opacity:1;pointer-events:all;}
+  .modal{background:var(--surface);border:1px solid var(--border);padding:28px;width:400px;max-width:90vw;transform:translateY(20px);transition:transform 0.25s ease;}
+  .modal-overlay.open .modal{transform:translateY(0);}
+  .modal-title{font-size:16px;font-weight:700;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+  .modal-close{background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;padding:0;transition:color 0.15s;}
+  .modal-close:hover{color:var(--text);}
+  .info-row{background:var(--bg);border:1px solid var(--border);padding:12px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;font-family:var(--font-mono);}
+  .info-row .lbl{font-size:10px;color:var(--muted);}
+  .info-row .val{font-size:15px;}
+  .profit-preview{padding:12px;background:var(--bg);border:1px solid var(--border);margin-bottom:16px;font-family:var(--font-mono);font-size:13px;display:flex;justify-content:space-between;align-items:center;}
+
+  /* Cost preview */
+  .cost-preview{padding:10px;background:var(--bg);border:1px solid var(--border);font-family:var(--font-mono);font-size:12px;color:var(--muted);margin-bottom:16px;display:none;}
+
+  /* Notification */
+  .notif{position:fixed;bottom:24px;right:24px;background:var(--surface2);border:1px solid var(--border);border-left:3px solid var(--accent);padding:14px 18px;font-family:var(--font-mono);font-size:13px;z-index:200;transform:translateX(120%);transition:transform 0.3s ease;max-width:300px;}
+  .notif.show{transform:translateX(0);}
+  .notif.error{border-left-color:var(--red);}
+
+  .loading{opacity:0.5;pointer-events:none;}
+
+  /* Currency selector */
+  .price-currency-row{display:grid;grid-template-columns:1fr auto;gap:0;}
+  .price-currency-row input{border-right:none;}
+  .currency-select{background:var(--surface2);border:1px solid var(--border);color:var(--accent);padding:10px 8px;font-family:var(--font-mono);font-size:12px;cursor:pointer;min-width:70px;-webkit-appearance:none;appearance:none;outline:none;text-align:center;border-radius:0;}
+  .currency-select:focus{border-color:var(--accent);}
+  .conversion-preview{font-family:var(--font-mono);font-size:11px;color:var(--muted);margin-top:5px;min-height:16px;transition:opacity 0.2s;}
+  .conversion-preview span{color:var(--accent);}
+  /* Reconvert hint */
+  .reconvert-bar{display:none;align-items:center;gap:6px;margin-top:6px;font-family:var(--font-mono);font-size:10px;color:var(--muted);}
+  .reconvert-bar.show{display:flex;}
+  .reconvert-btn{background:rgba(200,245,90,0.08);border:1px solid rgba(200,245,90,0.25);color:var(--accent);padding:3px 8px;font-family:var(--font-mono);font-size:10px;cursor:pointer;border-radius:2px;white-space:nowrap;transition:background 0.15s;}
+  .reconvert-btn:hover{background:rgba(200,245,90,0.18);}
+  /* Ticker validation badge */
+  .ticker-badge{display:none;align-items:center;gap:5px;margin-top:5px;font-family:var(--font-mono);font-size:10px;}
+  .ticker-badge.valid{display:flex;color:var(--accent);}
+  .ticker-badge.invalid{display:flex;color:var(--red);}
+  .ticker-badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0;}
+  /* Ticker search */
+  .ticker-search-wrap{position:relative;}
+  .ticker-input-row{display:flex;gap:0;}
+  .ticker-input-row input{flex:1;border-right:none;}
+  .search-btn{background:var(--surface2);border:1px solid var(--border);color:var(--accent);padding:10px 14px;font-family:var(--font-mono);font-size:12px;cursor:pointer;white-space:nowrap;transition:all 0.15s;letter-spacing:0.06em;flex-shrink:0;}
+  .search-btn:hover{background:rgba(200,245,90,0.1);border-color:var(--accent);}
+  .search-btn:disabled{opacity:0.5;cursor:not-allowed;}
+  .search-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--surface2);border:1px solid var(--border);border-top:none;z-index:50;max-height:280px;overflow-y:auto;display:none;}
+  .search-dropdown.open{display:block;}
+  .search-result-item{padding:10px 14px;cursor:pointer;border-bottom:1px solid rgba(37,37,53,0.6);transition:background 0.12s;}
+  .search-result-item:last-child{border-bottom:none;}
+  .search-result-item:hover{background:rgba(200,245,90,0.06);}
+  .sri-symbol{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text);}
+  .sri-name{font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .sri-price{font-family:var(--font-mono);font-size:12px;color:var(--accent);text-align:right;white-space:nowrap;}
+  .sri-exchange{font-size:9px;color:var(--muted);font-family:var(--font-mono);margin-top:1px;}
+  .search-no-result{padding:14px;font-family:var(--font-mono);font-size:12px;color:var(--muted);text-align:center;}
+  /* Transaction delete */
+  .tx-delete-btn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;line-height:1;padding:2px 4px;transition:color 0.15s;flex-shrink:0;opacity:0.4;}
+  .tx-item:hover .tx-delete-btn{opacity:1;}
+  .tx-delete-btn:hover{color:var(--red);}
+  /* Chart */
+  .chart-section{background:var(--surface);border:1px solid var(--border);padding:20px 24px;margin-bottom:24px;animation:fadeUp 0.45s ease both;}
+  .chart-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;}
+  .chart-title-block{}
+  .chart-label{font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:var(--muted);font-family:var(--font-mono);}
+  .chart-value{font-size:28px;font-weight:700;font-family:var(--font-mono);margin-top:2px;}
+  .chart-change{font-size:12px;font-family:var(--font-mono);margin-top:2px;}
+  .chart-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .range-btns{display:flex;gap:2px;}
+  .range-btn{background:none;border:1px solid transparent;color:var(--muted);padding:5px 10px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;cursor:pointer;border-radius:2px;transition:all 0.15s;}
+  .range-btn:hover{color:var(--text);}
+  .range-btn.active{background:var(--surface2);border-color:var(--border);color:var(--accent);}
+  .refresh-btn{display:flex;align-items:center;gap:6px;background:rgba(200,245,90,0.08);border:1px solid rgba(200,245,90,0.3);color:var(--accent);padding:6px 14px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;cursor:pointer;border-radius:2px;transition:all 0.15s;text-transform:uppercase;}
+  .refresh-btn:hover{background:rgba(200,245,90,0.15);}
+  .refresh-btn:disabled{opacity:0.5;cursor:not-allowed;}
+  .refresh-btn .spin{display:inline-block;animation:spin 1s linear infinite;}
+  .last-updated{font-family:var(--font-mono);font-size:10px;color:var(--muted);}
+  .chart-canvas-wrap{position:relative;height:220px;width:100%;}
+  canvas#portfolio-chart{width:100%!important;height:100%!important;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);}}
+
+  @media(max-width:900px){.main-grid{grid-template-columns:1fr;}.stats-bar{grid-template-columns:repeat(2,1fr);}}
+  @media(max-width:560px){.stats-bar{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <div class="logo">
+      VAULT
+      <span>PERSONAL PORTFOLIO MANAGER</span>
+    </div>
+    <div class="header-right">
+      <div class="cash-pill" onclick="focusCash()">
+        <div class="label">LIQUID CASH · SAR</div>
+        <div class="value" id="header-cash">ر.س —</div>
+      </div>
+      <div class="user-pill">
+        Logged in as <strong>{{ user.username }}</strong>
+      </div>
+      <button class="logout-btn" onclick="logout()">Logout</button>
+    </div>
+  </header>
+
+  <!-- Stats -->
+  <div class="stats-bar">
+    <div class="stat-card">
+      <div class="stat-label">Portfolio Value · SAR</div>
+      <div class="stat-value" id="stat-portfolio">—</div>
+      <div class="stat-sub" id="stat-positions">— positions</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Invested · SAR</div>
+      <div class="stat-value" id="stat-invested">—</div>
+      <div class="stat-sub">cost basis</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Unrealized P&L · SAR</div>
+      <div class="stat-value" id="stat-unrealized">—</div>
+      <div class="stat-sub" id="stat-unrealized-pct">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Realized P&L · SAR</div>
+      <div class="stat-value" id="stat-realized">—</div>
+      <div class="stat-sub">from closed positions</div>
+    </div>
+  </div>
+
+  <!-- Portfolio Chart -->
+  <div class="chart-section">
+    <div class="chart-header">
+      <div class="chart-title-block">
+        <div class="chart-label">Total Portfolio Value · SAR</div>
+        <div class="chart-value" id="chart-display-value">—</div>
+        <div class="chart-change" id="chart-display-change"></div>
+      </div>
+      <div class="chart-controls">
+        <div class="range-btns">
+          <button class="range-btn" onclick="setRange('1W')">1W</button>
+          <button class="range-btn active" onclick="setRange('1M')">1M</button>
+          <button class="range-btn" onclick="setRange('YTD')">YTD</button>
+          <button class="range-btn" onclick="setRange('1Y')">1Y</button>
+          <button class="range-btn" onclick="setRange('Max')">Max</button>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+          <button class="refresh-btn" id="refresh-btn" onclick="refreshPrices()">
+            <span id="refresh-icon">⟳</span> Refresh Prices
+          </button>
+          <div class="last-updated" id="last-updated-label">Last updated: —</div>
+        </div>
+      </div>
+    </div>
+    <div class="chart-canvas-wrap">
+      <canvas id="portfolio-chart"></canvas>
+    </div>
+  </div>
+
+  <div class="main-grid">
+    <!-- Left panel -->
+    <div>
+      <div class="panel">
+        <div class="tabs">
+          <button class="tab active" onclick="switchTab('holdings')">Holdings</button>
+          <button class="tab" onclick="switchTab('transactions')">Transactions</button>
+        </div>
+
+        <div id="tab-holdings" class="tab-content active">
+          <div id="holdings-empty" class="empty-state">No holdings yet. Add your first investment →</div>
+          <div id="holdings-wrap" style="display:none;overflow-x:auto;">
+            <table class="holdings-table">
+              <thead>
+                <tr>
+                  <th>Asset</th><th>Qty</th><th>Avg Cost (SAR)</th><th>Total Cost (SAR)</th>
+                  <th>Current Price (SAR)</th><th>Market Value (SAR)</th><th>P&L (SAR)</th><th></th>
+                </tr>
+              </thead>
+              <tbody id="holdings-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="tab-transactions" class="tab-content">
+          <div id="tx-empty" class="empty-state">No transactions yet.</div>
+          <div id="tx-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right sidebar -->
+    <div class="sidebar">
+
+      <div class="cash-widget panel" id="cash-widget">
+        <div style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:var(--muted);">Available Cash</div>
+        <div class="cash-display" id="cash-display">$—</div>
+        <div style="color:var(--muted);font-family:var(--font-mono);font-size:11px;">liquid capital · SAR</div>
+        <div class="cash-actions">
+          <button class="cash-btn deposit" onclick="openCashModal('deposit')">+ Deposit</button>
+          <button class="cash-btn withdraw" onclick="openCashModal('withdraw')">− Withdraw</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">New Investment</span></div>
+        <div class="form-body">
+          <div class="form-group">
+            <label>Asset Name / Ticker</label>
+            <div class="ticker-search-wrap" id="ticker-search-wrap">
+              <div class="ticker-input-row">
+                <input type="text" id="f-name" placeholder="e.g. AAPL, 2222.SR, BTC" autocomplete="off" onkeydown="onTickerKeydown(event)">
+                <button class="search-btn" id="ticker-search-btn" onclick="runTickerSearch()" title="Search Yahoo Finance">⌕ Search</button>
+              </div>
+              <div class="search-dropdown" id="search-dropdown"></div>
+            </div>
+            <div class="ticker-badge" id="ticker-badge">
+              <span class="ticker-badge-dot"></span>
+              <span id="ticker-badge-text"></span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Asset Type</label>
+            <select id="f-type" onchange="onAssetTypeChange()">
+              <option>Stock</option><option>ETF</option><option>Crypto</option>
+              <option>Bond</option><option>Real Estate</option><option>Alternative</option><option>Other</option>
+            </select>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="form-group" style="margin-bottom:0">
+              <label>Quantity</label>
+              <input type="number" id="f-qty" placeholder="10" min="0" step="any">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label>Price / Unit</label>
+              <div class="price-currency-row">
+                <input type="number" id="f-price" placeholder="150.00" min="0" step="any">
+                <select id="f-currency" class="currency-select" onchange="onCurrencyChange()" title="Select the currency of the price you are entering">
+                  <option value="SAR">SAR</option>
+                  <option value="USD">USD</option>
+                  <option value="EUR">EUR</option>
+                  <option value="GBP">GBP</option>
+                  <option value="AED">AED</option>
+                  <option value="KWD">KWD</option>
+                </select>
+              </div>
+              <div class="conversion-preview" id="conversion-preview"></div>
+              <div class="reconvert-bar" id="reconvert-bar">
+                <span>Wrong currency selected?</span>
+                <button class="reconvert-btn" onclick="reconvertPrice()" title="Recalculate the price field from the current SAR value into the newly selected currency">↺ Re-convert</button>
+              </div>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:16px">
+            <label>Purchase Date</label>
+            <input type="date" id="f-date">
+          </div>
+          <div class="form-group">
+            <label>Notes (optional)</label>
+            <input type="text" id="f-notes" placeholder="e.g. long-term hold">
+          </div>
+          <div class="cost-preview" id="cost-preview">
+            Total cost (SAR): <span id="cost-amount" style="color:var(--text)"></span>
+          </div>
+          <div id="cash-warning" style="display:none;font-family:var(--font-mono);font-size:11px;margin-bottom:10px;padding:8px 10px;border-radius:3px;border:1px solid;"></div>
+          <button class="btn" id="add-btn" onclick="addInvestment()">Record Investment</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Sell Modal -->
+<div class="modal-overlay" id="sell-modal">
+  <div class="modal">
+    <div class="modal-title">
+      Sell — <span id="sell-name"></span>
+      <button class="modal-close" onclick="closeModal('sell-modal')">×</button>
+    </div>
+    <div class="info-row">
+      <span class="lbl">Avg Cost / Unit</span>
+      <span class="val" id="sell-avg"></span>
+    </div>
+    <div class="form-group">
+      <label>Quantity to Sell</label>
+      <input type="number" id="sell-qty" placeholder="0" step="any" oninput="updateSellPreview()">
+      <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:4px;">Max: <span id="sell-max"></span></div>
+    </div>
+    <div class="form-group">
+      <label>Sell Price / Unit</label>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input type="number" id="sell-price" placeholder="0.00" step="any" style="flex:1;" oninput="updateSellPreview()">
+        <select id="sell-currency" onchange="updateSellPreview()" style="width:90px;padding:8px 6px;background:var(--surface);border:1px solid var(--border);color:var(--fg);border-radius:4px;font-size:13px;">
+          <option value="SAR">SAR</option>
+          <option value="USD">USD</option>
+          <option value="EUR">EUR</option>
+          <option value="GBP">GBP</option>
+          <option value="AED">AED</option>
+          <option value="KWD">KWD</option>
+        </select>
+      </div>
+      <div id="sell-price-preview" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px;"></div>
+    </div>
+    <div class="form-group">
+      <label>Sell Date</label>
+      <input type="date" id="sell-date">
+    </div>
+    <div class="profit-preview" id="sell-preview" style="display:none">
+      <span style="color:var(--muted);font-size:11px;">Estimated P&L</span>
+      <span id="sell-pnl" style="font-weight:600;font-size:15px;"></span>
+    </div>
+    <button class="btn" onclick="executeSell()">Confirm Sale</button>
+  </div>
+</div>
+
+<!-- Update Holding Modal -->
+<div class="modal-overlay" id="price-modal">
+  <div class="modal">
+    <div class="modal-title">
+      Update — <span id="price-name"></span>
+      <button class="modal-close" onclick="closeModal('price-modal')">×</button>
+    </div>
+
+    <!-- Currency selector (shared for both fields) -->
+    <div style="margin-bottom:12px;">
+      <label style="font-size:10px;letter-spacing:0.08em;color:var(--muted);text-transform:uppercase;">Currency</label>
+      <select id="price-currency" onchange="updatePricePreview()" style="width:100%;margin-top:4px;padding:8px 6px;background:var(--surface);border:1px solid var(--border);color:var(--fg);border-radius:4px;font-size:13px;">
+        <option value="SAR">SAR ر.س</option>
+        <option value="USD">USD $</option>
+        <option value="EUR">EUR €</option>
+        <option value="GBP">GBP £</option>
+        <option value="AED">AED</option>
+        <option value="KWD">KWD</option>
+      </select>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div class="form-group" style="margin:0;">
+        <label>Current Price</label>
+        <input type="number" id="price-val" placeholder="0.00" step="any" oninput="updatePricePreview()">
+        <div id="price-cur-preview" style="font-size:10px;color:var(--muted);margin-top:3px;min-height:14px;"></div>
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label>Avg Cost <span style="font-size:9px;color:var(--muted);">(optional)</span></label>
+        <input type="number" id="avg-cost-val" placeholder="leave blank to keep" step="any" oninput="updatePricePreview()">
+        <div id="avg-cost-preview" style="font-size:10px;color:var(--muted);margin-top:3px;min-height:14px;"></div>
+      </div>
+    </div>
+
+    <div id="price-convert-preview" style="font-size:11px;color:var(--muted);margin-top:8px;min-height:14px;"></div>
+    <button class="btn" style="margin-top:14px;" onclick="executeUpdatePrice()">Save Changes</button>
+  </div>
+</div>
+
+<!-- Cash Modal -->
+<div class="modal-overlay" id="cash-modal">
+  <div class="modal">
+    <div class="modal-title">
+      <span id="cash-modal-title">Deposit Cash</span>
+      <button class="modal-close" onclick="closeModal('cash-modal')">×</button>
+    </div>
+    <div class="form-group">
+      <label>Amount</label>
+      <input type="number" id="cash-amount" placeholder="0.00" step="any" min="0">
+    </div>
+    <div class="form-group">
+      <label>Notes (optional)</label>
+      <input type="text" id="cash-notes" placeholder="">
+    </div>
+    <button class="btn" id="cash-modal-btn" onclick="executeCash()">Deposit</button>
+  </div>
+</div>
+
+<div class="notif" id="notif"></div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let holdings = [];
+let cashBalance = 0;
+let activeSellId = null;
+let activePriceId = null;
+let cashMode = 'deposit';
+
+// Ticker validation — must be true before market assets can be submitted
+let tickerValidated = false;
+// The SAR price that was set when ticker was last validated (for reconvert)
+let lastValidatedSARPrice = null;
+// Non-market types that don't need a ticker lookup
+const NO_TICKER_TYPES = new Set(['Bond','Real Estate','Alternative','Other']);
+
+// ── API ───────────────────────────────────────────────────────────────────────
+const token = localStorage.getItem('vault_token');
+
+async function api(method, path, body) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+  };
+  if (token) opts.headers['Authorization'] = `Bearer ${token}`;
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(path, opts);
+  if (res.status === 401) { window.location.href = '/login'; return null; }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// ── Currency ──────────────────────────────────────────────────────────────────
+// SAR is the default display currency.
+// USD assets are shown with their native price + a SAR equivalent in muted text.
+const CURRENCY = 'SAR';
+const CURRENCY_SYMBOL = 'ر.س';
+// Exchange rates (approximate fallback — updated on load via /api/prices/quote)
+let USD_TO_SAR = 3.75;  // fixed peg (official rate)
+let EUR_TO_SAR = 4.08;
+
+const CURRENCY_RATES = { SAR: 1, USD: 3.75, GBP: 4.73, EUR: 4.08, KWD: 12.19, AED: 1.02 };
+
+function toSAR(amount, currency) {
+  if (!currency || currency === 'SAR') return amount;
+  const rate = CURRENCY_RATES[currency.toUpperCase()] || 1;
+  return amount * rate;
+}
+
+// ── Format ────────────────────────────────────────────────────────────────────
+const fmt = (n, currency) => {
+  const sym = (!currency || currency === 'SAR') ? CURRENCY_SYMBOL : currency;
+  return sym + ' ' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+};
+const fmtS = n => (n >= 0 ? '+' : '-') + fmt(n);
+const fmtP = n => (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// ── Load ──────────────────────────────────────────────────────────────────────
+async function loadAll() {
+  try {
+    const [summary, h, txs, cash] = await Promise.all([
+      api('GET', '/api/portfolio/summary'),
+      api('GET', '/api/portfolio/holdings'),
+      api('GET', '/api/transactions'),
+      api('GET', '/api/cash'),
+    ]);
+    if (!summary) return;
+    holdings = h;
+    cashBalance = cash.balance;
+    renderSummary(summary);
+    renderHoldings();
+    renderTransactions(txs);
+    renderCash();
+  } catch(e) {
+    notify('Failed to load data: ' + e.message, true);
+  }
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function renderSummary(s) {
+  document.getElementById('stat-portfolio').textContent = fmt(s.portfolio_value);
+  document.getElementById('stat-positions').textContent = s.positions_count + ' position' + (s.positions_count !== 1 ? 's' : '');
+  document.getElementById('stat-invested').textContent = fmt(s.total_invested);
+
+  const unEl = document.getElementById('stat-unrealized');
+  unEl.textContent = fmtS(s.unrealized_pnl);
+  unEl.className = 'stat-value ' + (s.unrealized_pnl >= 0 ? 'pos' : 'neg');
+  document.getElementById('stat-unrealized-pct').textContent = fmtP(s.unrealized_pct);
+
+  const realEl = document.getElementById('stat-realized');
+  realEl.textContent = fmtS(s.realized_pnl);
+  realEl.className = 'stat-value ' + (s.realized_pnl >= 0 ? 'pos' : 'neg');
+}
+
+function renderCash() {
+  document.getElementById('cash-display').textContent = fmt(cashBalance);
+  document.getElementById('header-cash').textContent = fmt(cashBalance);
+}
+
+function renderHoldings() {
+  const tbody = document.getElementById('holdings-tbody');
+  const empty = document.getElementById('holdings-empty');
+  const wrap  = document.getElementById('holdings-wrap');
+  if (!holdings.length) { empty.style.display='block'; wrap.style.display='none'; return; }
+  empty.style.display='none'; wrap.style.display='block';
+
+  const usdRate = CURRENCY_RATES['USD'] || 3.75;  // SAR per 1 USD → divide to get USD
+
+  tbody.innerHTML = holdings.map(h => {
+    const mv  = h.quantity * h.current_price;
+    const cb  = h.quantity * h.avg_cost;
+    const pnl = mv - cb;
+    const pct = cb > 0 ? pnl/cb*100 : 0;
+    const pc  = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+
+    // USD equivalents (SAR ÷ rate)
+    const avgCostUSD    = h.avg_cost     / usdRate;
+    const tcUSD         = cb             / usdRate;  // total cost in USD
+    const curPriceUSD   = h.current_price / usdRate;
+    const mvUSD         = mv              / usdRate;
+    const pnlUSD        = pnl             / usdRate;
+
+    const usdSub = n => `<div style="font-size:10px;color:var(--muted);font-family:var(--font-mono);margin-top:1px;">USD ${Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>`;
+    const pnlUsdSub = `<div style="font-size:10px;color:var(--muted);font-family:var(--font-mono);margin-top:1px;">${pnl>=0?'+':'-'}USD ${Math.abs(pnlUSD).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>`;
+
+    return `<tr>
+      <td>
+        <div class="asset-name">${esc(h.name)}<span class="asset-type-badge">${esc(h.asset_type)}</span></div>
+        ${h.notes ? `<div style="font-size:10px;color:var(--muted);font-family:var(--font-mono);margin-top:2px;">${esc(h.notes)}</div>` : ''}
+      </td>
+      <td>${h.quantity.toLocaleString('en-US',{maximumFractionDigits:6})}</td>
+      <td>${fmt(h.avg_cost)}${usdSub(avgCostUSD)}</td>
+      <td>${fmt(cb)}${usdSub(tcUSD)}</td>
+      <td>
+        ${fmt(h.current_price)}${usdSub(curPriceUSD)}
+        <button class="update-price-btn" onclick="openPriceModal(${h.id},'${esc(h.name)}',${h.current_price},${h.avg_cost})">update</button>
+      </td>
+      <td>${fmt(mv)}${usdSub(mvUSD)}</td>
+      <td class="${pc}">${fmtS(pnl)}${pnlUsdSub}<span style="font-size:10px;">${fmtP(pct)}</span></td>
+      <td><div class="row-actions"><button class="action-btn" onclick="openSellModal(${h.id},'${esc(h.name)}',${h.avg_cost},${h.quantity},${h.current_price})">Sell</button></div></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderTransactions(txs) {
+  const list  = document.getElementById('tx-list');
+  const empty = document.getElementById('tx-empty');
+  if (!txs.length) { empty.style.display='block'; list.innerHTML=''; return; }
+  empty.style.display='none';
+
+  list.innerHTML = txs.map(tx => {
+    const dotCls = tx.tx_type==='BUY'?'buy':tx.tx_type==='SELL'?'sell':'cash';
+    const amtColor = tx.tx_type==='SELL'||tx.tx_type==='WITHDRAW'?'var(--red)':tx.tx_type==='DEPOSIT'?'var(--accent)':'var(--accent2)';
+    const amtStr = (tx.tx_type==='SELL'||tx.tx_type==='WITHDRAW'?'-':'+') + fmt(tx.total);
+    const pnlHtml = tx.realized_pnl != null
+      ? `<div style="font-size:10px;color:${tx.realized_pnl>=0?'var(--accent)':'var(--red)'}">P&L: ${fmtS(tx.realized_pnl)}</div>` : '';
+    return `<div class="tx-item" id="tx-row-${tx.id}">
+      <span class="tx-dot ${dotCls}"></span>
+      <div style="flex:1;min-width:0;">
+        <div class="tx-name">${tx.tx_type} — ${esc(tx.asset_name||'')}</div>
+        ${tx.quantity?`<div class="tx-date">${tx.quantity} units @ ${fmt(tx.price)}</div>`:''}
+        <div class="tx-date">${tx.tx_date||''}</div>
+        ${pnlHtml}
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="color:${amtColor};white-space:nowrap;font-family:var(--font-mono);font-size:12px;">${amtStr}</div>
+        <button class="tx-delete-btn" onclick="deleteTransaction(${tx.id})" title="Delete transaction">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Currency conversion helpers ───────────────────────────────────────────────
+function getSelectedCurrency() {
+  return document.getElementById('f-currency').value || 'SAR';
+}
+
+function getSARPrice() {
+  const price = parseFloat(document.getElementById('f-price').value);
+  if (!price || price <= 0) return 0;
+  return toSAR(price, getSelectedCurrency());
+}
+
+function updateConversionPreview() {
+  const price    = parseFloat(document.getElementById('f-price').value);
+  const currency = getSelectedCurrency();
+  const el       = document.getElementById('conversion-preview');
+  const rebar    = document.getElementById('reconvert-bar');
+
+  if (!price || price <= 0 || currency === 'SAR') {
+    el.textContent = '';
+    rebar.classList.remove('show');
+    return;
+  }
+  const sarPrice = toSAR(price, currency);
+  const rate     = CURRENCY_RATES[currency] || 1;
+  el.innerHTML   = `${currency} ${price.toLocaleString('en-US',{maximumFractionDigits:4})} = <span>${fmt(sarPrice)}</span> <span style="color:var(--muted);font-size:10px;">(rate: ${rate})</span>`;
+  // Never show reconvert if user just typed a price manually — only after currency dropdown changes
+}
+
+function onCurrencyChange() {
+  const price = parseFloat(document.getElementById('f-price').value);
+  const currency = getSelectedCurrency();
+  // Show reconvert hint if there's already a price and we switched away from SAR
+  if (price > 0 && currency !== 'SAR') {
+    document.getElementById('reconvert-bar').classList.add('show');
+  } else {
+    document.getElementById('reconvert-bar').classList.remove('show');
+  }
+  updateConversionPreview();
+  updateCostPreview();
+}
+
+function reconvertPrice() {
+  // Take whatever SAR value is currently implied by the price field,
+  // and recalculate it in the newly selected currency.
+  // e.g. you typed "562.5" thinking SAR, then switched to USD → click re-convert → becomes "150"
+  const currentPrice = parseFloat(document.getElementById('f-price').value);
+  if (!currentPrice || currentPrice <= 0) return;
+
+  const newCurrency = getSelectedCurrency();
+  if (newCurrency === 'SAR') return;
+
+  // Treat the currently displayed price as SAR and reverse-convert
+  const rate = CURRENCY_RATES[newCurrency] || 1;
+  const reconverted = currentPrice / rate;
+
+  document.getElementById('f-price').value = reconverted.toFixed(4);
+  document.getElementById('reconvert-bar').classList.remove('show');
+  updateConversionPreview();
+  updateCostPreview();
+}
+
+function updateCostPreview() {
+  const qty      = parseFloat(document.getElementById('f-qty').value);
+  const sarPrice = getSARPrice();
+  const el       = document.getElementById('cost-preview');
+  const warn     = document.getElementById('cash-warning');
+  if (qty > 0 && sarPrice > 0) {
+    const totalCost = qty * sarPrice;
+    document.getElementById('cost-amount').textContent = fmt(totalCost);
+    el.style.display = 'block';
+
+    // Cash sufficiency warning
+    if (cashBalance > 0 || totalCost > 0) {
+      const diff = cashBalance - totalCost;
+      if (diff < 0) {
+        warn.style.display = 'block';
+        warn.style.borderColor = 'var(--red)';
+        warn.style.color = 'var(--red)';
+        warn.style.background = 'rgba(245,90,90,0.07)';
+        warn.innerHTML = `⚠ Insufficient cash &nbsp;·&nbsp; Available: <strong>${fmt(cashBalance)}</strong> &nbsp;·&nbsp; Short by: <strong>${fmt(Math.abs(diff))}</strong>`;
+      } else {
+        warn.style.display = 'block';
+        warn.style.borderColor = 'var(--border)';
+        warn.style.color = 'var(--muted)';
+        warn.style.background = 'transparent';
+        warn.innerHTML = `Available cash: <strong style="color:var(--accent)">${fmt(cashBalance)}</strong> &nbsp;·&nbsp; After purchase: <strong>${fmt(diff)}</strong>`;
+      }
+    } else {
+      warn.style.display = 'none';
+    }
+  } else {
+    el.style.display = 'none';
+    warn.style.display = 'none';
+  }
+}
+
+// ── Ticker validation badge ───────────────────────────────────────────────────
+function setTickerValid(symbol, assetType) {
+  tickerValidated = true;
+  const badge = document.getElementById('ticker-badge');
+  const text  = document.getElementById('ticker-badge-text');
+  badge.className = 'ticker-badge valid';
+  text.textContent = `✓ ${symbol} verified via Yahoo Finance`;
+  // If type changed to non-market, clear validation requirement
+  if (NO_TICKER_TYPES.has(assetType)) {
+    badge.className = 'ticker-badge';
+  }
+}
+
+function clearTickerValidation() {
+  tickerValidated = false;
+  document.getElementById('ticker-badge').className = 'ticker-badge';
+  document.getElementById('ticker-badge-text').textContent = '';
+}
+
+function onAssetTypeChange() {
+  const type = document.getElementById('f-type').value;
+  if (NO_TICKER_TYPES.has(type)) {
+    // Non-market asset — hide badge, no search required
+    document.getElementById('ticker-badge').className = 'ticker-badge';
+    // Don't change tickerValidated — it will be bypassed in addInvestment
+  } else {
+    // Market asset selected — re-enforce validation if ticker changed
+    if (!tickerValidated) {
+      const name = document.getElementById('f-name').value.trim();
+      if (name) {
+        const badge = document.getElementById('ticker-badge');
+        badge.className = 'ticker-badge invalid';
+        document.getElementById('ticker-badge-text').textContent = '⚠ Use ⌕ Search to verify this ticker';
+      }
+    }
+  }
+}
+
+// ── Add Investment ────────────────────────────────────────────────────────────
+async function addInvestment() {
+  const name     = document.getElementById('f-name').value.trim();
+  const type     = document.getElementById('f-type').value;
+  const qty      = parseFloat(document.getElementById('f-qty').value);
+  const rawPrice = parseFloat(document.getElementById('f-price').value);
+  const currency = getSelectedCurrency();
+  const date     = document.getElementById('f-date').value;
+  const notes    = document.getElementById('f-notes').value.trim();
+
+  if (!name)              return notify('Enter an asset name.', true);
+
+  // ── Enforce ticker validation for market asset types ──────────────────────
+  const requiresTicker = !NO_TICKER_TYPES.has(type);
+  if (requiresTicker && !tickerValidated) {
+    // Show badge hint
+    const badge = document.getElementById('ticker-badge');
+    badge.className = 'ticker-badge invalid';
+    document.getElementById('ticker-badge-text').textContent = '⚠ Use ⌕ Search to verify this ticker first';
+    return notify('Please search and select a verified ticker before adding.', true);
+  }
+
+  if (!qty || qty <= 0)   return notify('Enter a valid quantity.', true);
+  if (!rawPrice || rawPrice <= 0) return notify('Enter a valid price.', true);
+
+  // Convert to SAR — this is what gets stored in the DB
+  const sarPrice = toSAR(rawPrice, currency);
+  const originalNote = currency !== 'SAR'
+    ? `Entered as ${currency} ${rawPrice.toLocaleString('en-US',{maximumFractionDigits:6})} (rate ${CURRENCY_RATES[currency]||1})${notes ? ' — ' + notes : ''}`
+    : notes;
+
+  const btn = document.getElementById('add-btn');
+  btn.disabled = true; btn.textContent = 'Recording…';
+
+  try {
+    await api('POST', '/api/portfolio/holdings', {
+      name,
+      asset_type: type,
+      quantity: qty,
+      avg_cost: sarPrice,
+      current_price: sarPrice,
+      purchase_date: date || null,
+      notes: originalNote || null,
+    });
+
+    const currencyNote = currency !== 'SAR' ? ` (${currency} ${rawPrice} → ${fmt(sarPrice)})` : '';
+    notify(`Added ${qty} × ${name} @ ${fmt(sarPrice)}${currencyNote}`);
+
+    // Reset form
+    document.getElementById('f-name').value = '';
+    document.getElementById('f-qty').value = '';
+    document.getElementById('f-price').value = '';
+    document.getElementById('f-notes').value = '';
+    document.getElementById('f-currency').value = 'SAR';
+    document.getElementById('cost-preview').style.display = 'none';
+    document.getElementById('conversion-preview').textContent = '';
+    document.getElementById('reconvert-bar').classList.remove('show');
+    clearTickerValidation();
+    await loadAll();
+  } catch(e) {
+    notify(e.message, true);
+  }
+  btn.disabled = false; btn.textContent = 'Record Investment';
+}
+
+// Cost + conversion preview on input
+['f-qty', 'f-price'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => {
+    updateConversionPreview();
+    updateCostPreview();
+  });
+});
+
+// ── Sell ──────────────────────────────────────────────────────────────────────
+function openSellModal(id, name, avgCost, maxQty, curPrice) {
+  activeSellId = id;
+  document.getElementById('sell-name').textContent = name;
+  document.getElementById('sell-avg').textContent = fmt(avgCost);
+  document.getElementById('sell-max').textContent = maxQty.toLocaleString('en-US',{maximumFractionDigits:6});
+  document.getElementById('sell-qty').value = '';
+  document.getElementById('sell-price').value = parseFloat(curPrice).toFixed(2);
+  document.getElementById('sell-currency').value = 'SAR';
+  document.getElementById('sell-price-preview').textContent = '';
+  document.getElementById('sell-date').value = today();
+  document.getElementById('sell-preview').style.display = 'none';
+  openModal('sell-modal');
+  document.getElementById('sell-modal').dataset.avgCost = avgCost;
+  updateSellPreview();
+}
+
+function updateSellPreview() {
+  const qty     = parseFloat(document.getElementById('sell-qty').value);
+  const rawPrice = parseFloat(document.getElementById('sell-price').value);
+  const cur     = document.getElementById('sell-currency').value;
+  const avgCost = parseFloat(document.getElementById('sell-modal').dataset.avgCost || 0);
+  const el      = document.getElementById('sell-preview');
+  const prev    = document.getElementById('sell-price-preview');
+
+  // Conversion preview
+  if (rawPrice > 0 && cur !== 'SAR') {
+    const sarPrice = toSAR(rawPrice, cur);
+    prev.textContent = `${cur} ${rawPrice.toFixed(2)} = ر.س ${sarPrice.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  } else { prev.textContent = ''; }
+
+  // P&L preview (always in SAR)
+  if (qty > 0 && rawPrice > 0) {
+    const sarPrice = toSAR(rawPrice, cur);
+    const pnl = (sarPrice - avgCost) * qty;
+    const proceeds = sarPrice * qty;
+    const pnlEl = document.getElementById('sell-pnl');
+    pnlEl.innerHTML = `${fmtS(pnl)} <span style="font-size:11px;color:var(--muted)"> · ${fmt(proceeds)} to cash</span>`;
+    pnlEl.style.color = pnl >= 0 ? 'var(--accent)' : 'var(--red)';
+    el.style.display = 'flex';
+  } else { el.style.display = 'none'; }
+}
+
+async function executeSell() {
+  const qty      = parseFloat(document.getElementById('sell-qty').value);
+  const rawPrice = parseFloat(document.getElementById('sell-price').value);
+  const cur      = document.getElementById('sell-currency').value;
+  const date     = document.getElementById('sell-date').value;
+  if (!qty || qty <= 0)      return notify('Enter a valid quantity.', true);
+  if (!rawPrice || rawPrice <= 0) return notify('Enter a valid price.', true);
+  const sarPrice = toSAR(rawPrice, cur);
+  try {
+    await api('POST', '/api/portfolio/sell', {
+      holding_id: activeSellId, quantity: qty, price: sarPrice, tx_date: date || null,
+    });
+    const proceeds = qty * sarPrice;
+    const note = cur !== 'SAR' ? ` (${cur} ${rawPrice.toFixed(2)} → ر.س ${sarPrice.toFixed(2)})` : '';
+    closeModal('sell-modal');
+    notify(`Sold ${qty} units${note} — ${fmt(proceeds)} added to cash`);
+    await loadAll();
+  } catch(e) { notify(e.message, true); }
+}
+
+// ── Price Update ──────────────────────────────────────────────────────────────
+function openPriceModal(id, name, currentPrice, avgCost) {
+  activePriceId = id;
+  document.getElementById('price-name').textContent = name;
+  document.getElementById('price-currency').value = 'SAR';
+  // Round to 2dp — avoids ugly floats like 701.2874999999999
+  document.getElementById('price-val').value = parseFloat(currentPrice).toFixed(2);
+  document.getElementById('avg-cost-val').value = parseFloat(avgCost).toFixed(2);
+  document.getElementById('price-convert-preview').textContent = '';
+  document.getElementById('price-cur-preview').textContent = '';
+  document.getElementById('avg-cost-preview').textContent = '';
+  openModal('price-modal');
+}
+
+function updatePricePreview() {
+  const cur = document.getElementById('price-currency').value;
+
+  // Current price preview
+  const rawPrice = parseFloat(document.getElementById('price-val').value);
+  const pricePrev = document.getElementById('price-cur-preview');
+  if (rawPrice > 0 && cur !== 'SAR') {
+    const sar = toSAR(rawPrice, cur);
+    pricePrev.textContent = `= ر.س ${sar.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  } else { pricePrev.textContent = ''; }
+
+  // Avg cost preview
+  const rawAvg = parseFloat(document.getElementById('avg-cost-val').value);
+  const avgPrev = document.getElementById('avg-cost-preview');
+  if (rawAvg > 0 && cur !== 'SAR') {
+    const sar = toSAR(rawAvg, cur);
+    avgPrev.textContent = `= ر.س ${sar.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  } else { avgPrev.textContent = ''; }
+
+  // Combined summary line
+  const prev = document.getElementById('price-convert-preview');
+  prev.textContent = (cur !== 'SAR' && (rawPrice > 0 || rawAvg > 0))
+    ? `Rate: 1 ${cur} = ${CURRENCY_RATES[cur]} SAR`
+    : '';
+}
+
+async function executeUpdatePrice() {
+  const cur      = document.getElementById('price-currency').value;
+  const rawPrice = parseFloat(document.getElementById('price-val').value);
+  const rawAvg   = parseFloat(document.getElementById('avg-cost-val').value);
+
+  if (!rawPrice || rawPrice <= 0) return notify('Enter a valid current price.', true);
+
+  const sarPrice = toSAR(rawPrice, cur);
+  const payload  = { current_price: sarPrice };
+
+  // Only send avg_cost if user actually entered something
+  if (rawAvg > 0) payload.avg_cost = toSAR(rawAvg, cur);
+
+  try {
+    await api('PATCH', `/api/portfolio/holdings/${activePriceId}/price`, payload);
+    closeModal('price-modal');
+    const note = cur !== 'SAR'
+      ? ` (${cur} → SAR @ ${CURRENCY_RATES[cur]})`
+      : '';
+    notify(`Updated${note}`);
+    await loadAll();
+  } catch(e) { notify(e.message, true); }
+}
+
+// ── Cash ──────────────────────────────────────────────────────────────────────
+function openCashModal(mode) {
+  cashMode = mode;
+  document.getElementById('cash-modal-title').textContent = mode === 'deposit' ? 'Deposit Cash' : 'Withdraw Cash';
+  document.getElementById('cash-modal-btn').textContent = mode === 'deposit' ? 'Deposit' : 'Withdraw';
+  document.getElementById('cash-amount').value = '';
+  document.getElementById('cash-notes').value = '';
+  openModal('cash-modal');
+}
+
+async function executeCash() {
+  const amount = parseFloat(document.getElementById('cash-amount').value);
+  const notes  = document.getElementById('cash-notes').value.trim();
+  if (!amount || amount <= 0) return notify('Enter a valid amount.', true);
+  try {
+    const path = cashMode === 'deposit' ? '/api/cash/deposit' : '/api/cash/withdraw';
+    await api('POST', path, { amount, notes: notes || null });
+    closeModal('cash-modal');
+    notify(`${cashMode === 'deposit' ? 'Deposited' : 'Withdrew'} ${fmt(amount)}`);
+    await loadAll();
+    // Retake snapshot so chart reflects the new cash balance immediately
+    api('POST', '/api/prices/snapshot').then(() => loadChart()).catch(() => loadChart());
+  } catch(e) { notify(e.message, true); }
+}
+
+function focusCash() {
+  document.getElementById('cash-widget').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ── Logout ────────────────────────────────────────────────────────────────────
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+  localStorage.removeItem('vault_token');
+  window.location.href = '/login';
+}
+
+// ── Modal Helpers ─────────────────────────────────────────────────────────────
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+document.querySelectorAll('.modal-overlay').forEach(o => {
+  o.addEventListener('click', e => { if (e.target === o) o.classList.remove('open'); });
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+});
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.tab[onclick="switchTab('${name}')"]`).classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'transactions') loadAll();
+}
+
+// ── Notify ────────────────────────────────────────────────────────────────────
+let notifTimer;
+function notify(msg, isError = false) {
+  const el = document.getElementById('notif');
+  el.textContent = msg;
+  el.className = 'notif show' + (isError ? ' error' : '');
+  clearTimeout(notifTimer);
+  notifTimer = setTimeout(() => { el.className = 'notif'; }, 3500);
+}
+
+// ── Ticker Search ─────────────────────────────────────────────────────────────
+// Phase 1: fast search (no prices, just symbol list)
+// Phase 2: fetch price for the ONE ticker the user clicks
+
+function onTickerKeydown(e) {
+  if (e.key === 'Enter') { e.preventDefault(); runTickerSearch(); }
+  if (e.key === 'Escape') closeSearchDropdown();
+}
+
+async function runTickerSearch() {
+  const q = document.getElementById('f-name').value.trim();
+  if (!q) return;
+
+  const btn = document.getElementById('ticker-search-btn');
+  const dd  = document.getElementById('search-dropdown');
+
+  btn.disabled = true;
+  btn.textContent = '…';
+  dd.innerHTML = '<div class="search-no-result">Searching…</div>';
+  dd.classList.add('open');
+
+  try {
+    const data = await api('GET', `/api/prices/search?q=${encodeURIComponent(q)}`);
+
+    if (!data || !data.results || !data.results.length) {
+      dd.innerHTML = `<div class="search-no-result">No results for "<b>${esc(q)}</b>".<br>Try the exact Yahoo Finance format, e.g. <b>2222.SR</b>, <b>BTC-USD</b>.</div>`;
+      return;
+    }
+
+    // Render results immediately — price shown as "— (loading)" until clicked
+    dd.innerHTML = data.results.map(r => {
+      const typeTag = r.type ? `<span style="font-size:9px;padding:1px 5px;background:rgba(200,245,90,0.08);border:1px solid rgba(200,245,90,0.2);color:var(--accent);border-radius:2px;margin-left:5px;">${esc(r.type)}</span>` : '';
+      const currTag = r.currency ? `<span style="color:var(--muted);font-size:10px;"> · ${esc(r.currency)}</span>` : '';
+      return `
+      <div class="search-result-item" id="sri-${esc(r.symbol)}" onclick="selectTicker('${esc(r.symbol)}','${esc(r.currency||'')}')">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+          <div style="min-width:0;">
+            <div class="sri-symbol">${esc(r.symbol)}${typeTag}</div>
+            <div class="sri-name">${esc(r.name)}</div>
+            <div class="sri-exchange">${esc(r.exchange)}${currTag}</div>
+          </div>
+          <div class="sri-price" id="srip-${esc(r.symbol)}" style="color:var(--muted);font-size:10px;">tap to load price</div>
+        </div>
+      </div>`;
+    }).join('');
+
+  } catch(e) {
+    dd.innerHTML = `<div class="search-no-result">Search failed: ${esc(e.message)}</div>`;
+  } finally {
+    // Always reset button — this was the "stuck" bug
+    btn.disabled = false;
+    btn.textContent = '⌕ Search';
+  }
+}
+
+async function selectTicker(symbol, nativeCurrency) {
+  // For crypto stored as e.g. "ETH-USD", display/store just "ETH"
+  const displayName = symbol.replace(/-USD$/i, '').replace(/-USDT$/i, '');
+  document.getElementById('f-name').value = displayName;
+
+  // Show loading state in the price cell
+  const priceEl = document.getElementById(`srip-${symbol}`);
+  if (priceEl) { priceEl.style.color = 'var(--muted)'; priceEl.textContent = 'fetching…'; }
+
+  try {
+    const quote = await api('GET', `/api/prices/quote?symbol=${encodeURIComponent(symbol)}`);
+    if (quote && quote.price && quote.price > 0) {
+      const nativePrice = quote.price;
+      const assetCurrency = (quote.currency || nativeCurrency || 'SAR').toUpperCase();
+
+      // Set currency dropdown to match the asset's native currency
+      // so the user sees the real price (e.g. USD 150), and conversion happens on submit
+      const currencySelect = document.getElementById('f-currency');
+      const supportedCurrencies = ['SAR','USD','EUR','GBP','AED','KWD'];
+      currencySelect.value = supportedCurrencies.includes(assetCurrency) ? assetCurrency : 'USD';
+
+      // Fill with the NATIVE price (not converted) — the currency dropdown handles conversion
+      document.getElementById('f-price').value = nativePrice.toFixed(4);
+
+      // Trigger preview updates
+      updateConversionPreview();
+      updateCostPreview();
+
+      // Show in dropdown: native price + SAR equivalent
+      if (priceEl) {
+        const sarPrice = toSAR(nativePrice, assetCurrency);
+        const sarLabel = assetCurrency !== 'SAR'
+          ? `<span style="font-size:9px;color:var(--muted);"> → ${fmt(sarPrice)}</span>`
+          : '';
+        priceEl.innerHTML = `<span style="color:var(--accent);">${assetCurrency} ${nativePrice.toLocaleString('en-US',{maximumFractionDigits:4})}</span>${sarLabel}`;
+      }
+
+      // Auto-detect asset type
+      autoDetectAssetType(symbol, assetCurrency);
+
+      // Mark ticker as validated
+      setTickerValid(symbol, document.getElementById('f-type').value);
+      // Hide reconvert bar — price was just set correctly from the quote
+      document.getElementById('reconvert-bar').classList.remove('show');
+    } else {
+      if (priceEl) { priceEl.textContent = 'price unavailable'; }
+      // Still mark as validated even if price unavailable — symbol exists on Yahoo
+      setTickerValid(symbol, document.getElementById('f-type').value);
+    }
+  } catch(e) {
+    if (priceEl) { priceEl.textContent = 'error'; }
+    // Still validate — the ticker was found in search results
+    setTickerValid(symbol, document.getElementById('f-type').value);
+  }
+
+  closeSearchDropdown();
+  document.getElementById('f-qty').focus();
+}
+
+function autoDetectAssetType(symbol, currency) {
+  const sel = document.getElementById('f-type');
+  const s = symbol.toUpperCase();
+  const CRYPTO_BASES = new Set([
+    'BTC','ETH','BNB','SOL','XRP','USDT','ADA','DOT','DOGE','AVAX',
+    'MATIC','LINK','UNI','LTC','BCH','ATOM','FIL','NEAR','APT','ARB',
+    'OP','SUI','TRX','TON','SHIB','PEPE','WIF','BONK'
+  ]);
+  // Crypto detection: ends with -USD/-USDT, or known crypto base symbol
+  if (s.endsWith('-USD') || s.endsWith('-USDT') || CRYPTO_BASES.has(s)) {
+    sel.value = 'Crypto'; return;
+  }
+  // Saudi stocks
+  if (s.endsWith('.SR') || currency === 'SAR') { sel.value = 'Stock'; return; }
+  // US / international
+  if (['USD','GBP','EUR'].includes(currency)) { sel.value = 'Stock'; }
+}
+
+// Typing in name field clears validation (must re-search to re-validate)
+document.getElementById('f-name').addEventListener('input', () => {
+  const val = document.getElementById('f-name').value.trim();
+  // Always invalidate on manual type — user must pick from search
+  clearTickerValidation();
+  if (!val) {
+    document.getElementById('f-currency').value = 'SAR';
+    document.getElementById('conversion-preview').textContent = '';
+    document.getElementById('reconvert-bar').classList.remove('show');
+  }
+});
+
+function closeSearchDropdown() {
+  document.getElementById('search-dropdown').classList.remove('open');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', e => {
+  if (!document.getElementById('ticker-search-wrap').contains(e.target)) {
+    closeSearchDropdown();
+  }
+});
+
+// ── Delete Transaction ────────────────────────────────────────────────────────
+async function deleteTransaction(txId) {
+  if (!confirm(
+    'Delete this transaction?\n\n' +
+    'This will also REVERSE its effect:\n' +
+    '  • BUY  → removes/reduces the holding\n' +
+    '  • SELL → restores the holding, removes proceeds from cash\n' +
+    '  • DEPOSIT/WITHDRAW → adjusts cash balance\n\n' +
+    'This cannot be undone.'
+  )) return;
+
+  try {
+    const result = await api('DELETE', `/api/transactions/${txId}`);
+    // Remove row from DOM instantly
+    const row = document.getElementById(`tx-row-${txId}`);
+    if (row) row.remove();
+    // If no rows left, show empty state
+    if (!document.querySelector('.tx-item')) {
+      document.getElementById('tx-empty').style.display = 'block';
+    }
+    const msg = result && result.detail ? result.detail : 'Transaction deleted and reversed.';
+    notify(msg);
+    // Reload all data since holdings + cash may have changed
+    await loadAll();
+  } catch(e) {
+    notify('Delete failed: ' + e.message, true);
+  }
+}
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+function today() { return new Date().toISOString().slice(0,10); }
+
+// ── Chart ─────────────────────────────────────────────────────────────────────
+let portfolioChart = null;
+let activeRange = '1M';
+
+function setRange(range) {
+  activeRange = range;
+  document.querySelectorAll('.range-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent === range);
+  });
+  loadChart();
+}
+
+async function loadChart() {
+  try {
+    const data = await api('GET', `/api/prices/chart?range=${activeRange}`);
+    if (!data || !data.points) return;
+    renderChart(data.points);
+  } catch(e) {
+    console.warn('Chart load failed:', e.message);
+  }
+}
+
+function renderChart(points) {
+  const labels = points.map(p => p.date);
+  const values = points.map(p => p.value);
+
+  // Update header display
+  if (values.length > 0) {
+    const latest = values[values.length - 1];
+    const first  = values[0];
+    const change = latest - first;
+    const changePct = first > 0 ? (change / first * 100) : 0;
+
+    document.getElementById('chart-display-value').textContent = fmt(latest);
+    const changeEl = document.getElementById('chart-display-change');
+    changeEl.textContent = `${change >= 0 ? '↑' : '↓'} ${fmtS(change)} (${fmtP(changePct)}) vs period start`;
+    changeEl.style.color = change >= 0 ? 'var(--accent)' : 'var(--red)';
+  }
+
+  const ctx = document.getElementById('portfolio-chart').getContext('2d');
+
+  const isPositive = values.length < 2 || values[values.length - 1] >= values[0];
+  const lineColor  = isPositive ? '#c8f55a' : '#f55a5a';
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, 220);
+  gradient.addColorStop(0, isPositive ? 'rgba(200,245,90,0.18)' : 'rgba(245,90,90,0.18)');
+  gradient.addColorStop(1, 'rgba(10,10,15,0)');
+
+  if (portfolioChart) {
+    portfolioChart.data.labels = labels;
+    portfolioChart.data.datasets[0].data = values;
+    portfolioChart.data.datasets[0].borderColor = lineColor;
+    portfolioChart.data.datasets[0].backgroundColor = gradient;
+    portfolioChart.data.datasets[0].pointBackgroundColor = lineColor;
+    portfolioChart.update('active');
+    return;
+  }
+
+  portfolioChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        borderColor: lineColor,
+        backgroundColor: gradient,
+        borderWidth: 2,
+        fill: true,
+        tension: 0.35,
+        pointRadius: points.length === 1 ? 5 : 0,
+        pointHoverRadius: 6,
+        pointBackgroundColor: lineColor,
+        pointBorderColor: '#0a0a0f',
+        pointBorderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#12121a',
+          borderColor: '#252535',
+          borderWidth: 1,
+          titleColor: '#6b6b8a',
+          bodyColor: '#e8e8f0',
+          titleFont: { family: 'JetBrains Mono', size: 10 },
+          bodyFont:  { family: 'JetBrains Mono', size: 13, weight: '600' },
+          padding: 12,
+          callbacks: {
+            title: items => items[0].label,
+            label: item => ' ' + fmt(item.raw),
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(37,37,53,0.5)', drawBorder: false },
+          ticks: {
+            color: '#6b6b8a',
+            font: { family: 'JetBrains Mono', size: 10 },
+            maxTicksLimit: 7,
+            maxRotation: 0,
+          },
+          border: { display: false },
+        },
+        y: {
+          position: 'right',
+          grid: { color: 'rgba(37,37,53,0.5)', drawBorder: false },
+          ticks: {
+            color: '#6b6b8a',
+            font: { family: 'JetBrains Mono', size: 10 },
+            callback: v => {
+              // Use plain ASCII "SAR" on chart axis — Arabic ر.س causes RTL rendering glitches in Canvas
+              const abs = Math.abs(v);
+              let label;
+              if (abs >= 1_000_000)      label = (v / 1_000_000).toFixed(1) + 'M';
+              else if (abs >= 1_000)     label = (v / 1_000).toFixed(1) + 'K';
+              else                       label = v.toFixed(0);
+              return 'SAR ' + label;
+            },
+          },
+          border: { display: false },
+        }
+      }
+    }
+  });
+}
+
+// ── Price Refresh ─────────────────────────────────────────────────────────────
+async function refreshPrices() {
+  const btn  = document.getElementById('refresh-btn');
+  const icon = document.getElementById('refresh-icon');
+  btn.disabled = true;
+  icon.className = 'spin';
+  icon.textContent = '⟳';
+
+  try {
+    const result = await api('POST', '/api/prices/refresh');
+    if (!result) return;
+
+    const updated = result.updated.length;
+    const failed  = result.failed || [];
+    let msg;
+    if (updated > 0 && failed.length === 0) {
+      msg = `Updated ${updated} price${updated!==1?'s':''} ✓`;
+    } else if (updated > 0 && failed.length > 0) {
+      msg = `Updated ${updated}. Failed: ${failed.join(', ')} — check ticker matches Yahoo Finance.`;
+    } else if (failed.length > 0) {
+      msg = `Failed to fetch: ${failed.join(', ')} — verify ticker symbols on finance.yahoo.com.`;
+    } else {
+      msg = 'No market assets to refresh.';
+    }
+
+    notify(msg, failed.length > 0);
+    await loadAll();
+    await loadChart();
+    loadLastUpdated();
+  } catch(e) {
+    notify('Refresh failed: ' + e.message, true);
+  }
+
+  icon.className = '';
+  icon.textContent = '⟳';
+  btn.disabled = false;
+}
+
+async function loadLastUpdated() {
+  try {
+    const data = await api('GET', '/api/prices/last-updated');
+    const el = document.getElementById('last-updated-label');
+    if (data && data.last_updated) {
+      const d = new Date(data.last_updated + 'Z');
+      el.textContent = 'Last updated: ' + d.toLocaleString('en-US', {
+        month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
+      });
+    } else {
+      el.textContent = 'Last updated: never';
+    }
+  } catch(e) {}
+}
+
+// Auto-refresh every hour (3600000 ms)
+let autoRefreshTimer = setInterval(() => {
+  refreshPrices();
+}, 3600000);
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.getElementById('f-date').value = today();
+document.getElementById('sell-date').value = today();
+loadAll();
+loadLastUpdated();
+// Retake today's snapshot on every page load so chart reflects latest cash changes
+api('POST', '/api/prices/snapshot').then(() => loadChart()).catch(() => loadChart());
+</script>
+</body>
+</html>

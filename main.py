@@ -10,11 +10,15 @@ Or in production:
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+# Ensure static directory exists (Railway/Docker may not have it)
+os.makedirs("static", exist_ok=True)
 
 from app.database import init_db
 from app.auth import get_current_user_optional

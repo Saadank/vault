@@ -17,9 +17,11 @@ import os
 # On Railway: set DATABASE_URL env var to a PostgreSQL URL for persistent storage
 # Locally:    uses SQLite vault.db
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./vault.db")
-# If Railway injects a postgres:// URL, upgrade it to the async driver
+# Railway injects postgres:// or postgresql:// — both need the asyncpg async driver
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 # ─────────────────────────────────────────────────────────────────────────────
 
 engine = create_async_engine(DATABASE_URL, echo=False)

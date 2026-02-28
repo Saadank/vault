@@ -6,7 +6,7 @@ Swap the DATABASE_URL to PostgreSQL or MySQL easily:
 """
 
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, ForeignKey, Text
+    Column, Integer, String, Float, DateTime, ForeignKey, Text, text
 )
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -41,6 +41,19 @@ async def get_db():
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Widen snapshot_date to 16 chars to support hourly format YYYY-MM-DD HH
+        # Safe to run every startup — no-op if already wide enough or on SQLite
+        try:
+            await conn.execute(
+                text("ALTER TABLE portfolio_snapshots ALTER COLUMN snapshot_date TYPE VARCHAR(16)")
+            )
+        except Exception:
+            pass  # SQLite (no-op) or already migrated
+        # Add ticker column to holdings if it doesn't exist
+        try:
+            await conn.execute(text("ALTER TABLE holdings ADD COLUMN ticker VARCHAR(50)"))
+        except Exception:
+            pass  # already exists
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -76,6 +89,7 @@ class Holding(Base):
     id            = Column(Integer, primary_key=True, index=True)
     user_id       = Column(Integer, ForeignKey("users.id"), nullable=False)
     name          = Column(String(100), nullable=False)
+    ticker        = Column(String(50), nullable=True)   # Yahoo Finance symbol (for price fetch)
     asset_type    = Column(String(50), nullable=False)
     quantity      = Column(Float, nullable=False)
     avg_cost      = Column(Float, nullable=False)
@@ -112,7 +126,7 @@ class PortfolioSnapshot(Base):
 
     id              = Column(Integer, primary_key=True, index=True)
     user_id         = Column(Integer, ForeignKey("users.id"), nullable=False)
-    snapshot_date   = Column(String(10), nullable=False)   # YYYY-MM-DD
+    snapshot_date   = Column(String(16), nullable=False)   # YYYY-MM-DD (daily) or YYYY-MM-DD HH (hourly)
     portfolio_value = Column(Float, nullable=False)
     cash_balance    = Column(Float, nullable=False, default=0.0)
     total_value     = Column(Float, nullable=False)        # portfolio + cash

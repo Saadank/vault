@@ -145,9 +145,8 @@ async def get_quote(
         return {"symbol": symbol, "price": None, "currency": ""}
 
 
-# ── Helper: take a portfolio snapshot ────────────────────────────────────────
-async def _take_snapshot(db: AsyncSession, user_id: int):
-    """Record today's total portfolio value. Overwrites today's entry if it exists."""
+# ── Helper: compute current portfolio values ──────────────────────────────────
+async def _compute_values(db: AsyncSession, user_id: int):
     result = await db.execute(select(Holding).where(Holding.user_id == user_id))
     holdings = result.scalars().all()
     portfolio_value = sum(h.quantity * h.current_price for h in holdings)
@@ -155,10 +154,15 @@ async def _take_snapshot(db: AsyncSession, user_id: int):
     cash_result = await db.execute(select(CashBalance).where(CashBalance.user_id == user_id))
     cash = cash_result.scalar_one_or_none()
     cash_balance = cash.balance if cash else 0.0
+    return portfolio_value, cash_balance
 
+
+# ── Helper: take a daily portfolio snapshot ───────────────────────────────────
+async def _take_snapshot(db: AsyncSession, user_id: int):
+    """Record today's total portfolio value (YYYY-MM-DD key). Overwrites today's entry."""
+    portfolio_value, cash_balance = await _compute_values(db, user_id)
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
 
-    # Overwrite today's snapshot if already exists
     existing = await db.execute(
         select(PortfolioSnapshot).where(
             PortfolioSnapshot.user_id == user_id,
@@ -175,6 +179,37 @@ async def _take_snapshot(db: AsyncSession, user_id: int):
         snap = PortfolioSnapshot(
             user_id=user_id,
             snapshot_date=today_str,
+            portfolio_value=round(portfolio_value, 2),
+            cash_balance=round(cash_balance, 2),
+            total_value=round(portfolio_value + cash_balance, 2),
+        )
+        db.add(snap)
+
+    await db.commit()
+
+
+# ── Helper: take an hourly portfolio snapshot ─────────────────────────────────
+async def _take_hourly_snapshot(db: AsyncSession, user_id: int):
+    """Record an hourly snapshot (YYYY-MM-DD HH key). Overwrites the current hour's entry."""
+    portfolio_value, cash_balance = await _compute_values(db, user_id)
+    hour_str = datetime.utcnow().strftime("%Y-%m-%d %H")
+
+    existing = await db.execute(
+        select(PortfolioSnapshot).where(
+            PortfolioSnapshot.user_id == user_id,
+            PortfolioSnapshot.snapshot_date == hour_str,
+        )
+    )
+    snap = existing.scalar_one_or_none()
+
+    if snap:
+        snap.portfolio_value = round(portfolio_value, 2)
+        snap.cash_balance    = round(cash_balance, 2)
+        snap.total_value     = round(portfolio_value + cash_balance, 2)
+    else:
+        snap = PortfolioSnapshot(
+            user_id=user_id,
+            snapshot_date=hour_str,
             portfolio_value=round(portfolio_value, 2),
             cash_balance=round(cash_balance, 2),
             total_value=round(portfolio_value + cash_balance, 2),
@@ -201,8 +236,9 @@ async def refresh_prices(
 
     # Only auto-fetch for asset types that have market tickers
     fetchable_types = {"stock", "etf", "crypto"}
+    # Use ticker if set, otherwise fall back to name (legacy holdings)
     to_fetch = [
-        (h.name, h.asset_type)
+        (h.ticker or h.name, h.asset_type)
         for h in holdings
         if h.asset_type.lower() in fetchable_types
     ]
@@ -219,12 +255,13 @@ async def refresh_prices(
                 skipped.append(h.name)
                 continue
 
-            new_price = prices.get(h.name)
+            symbol = h.ticker or h.name
+            new_price = prices.get(symbol)
             if new_price and new_price > 0:
                 h.current_price = round(new_price, 6)
                 updated.append({"name": h.name, "price": h.current_price})
             else:
-                logger.warning(f"[refresh] Failed to get price for '{h.name}' (type={h.asset_type})")
+                logger.warning(f"[refresh] Failed to get price for '{symbol}' (holding='{h.name}', type={h.asset_type})")
                 failed.append(h.name)
 
         await db.commit()
@@ -249,24 +286,23 @@ async def chart_data(
 ):
     """
     Return time-series data for the portfolio value chart.
-    Each point: { date: "YYYY-MM-DD", value: float }
+    All ranges query all available snapshots (daily YYYY-MM-DD and hourly YYYY-MM-DD HH)
+    within the time window, ordered chronologically.
     """
     now = datetime.utcnow()
 
     if range == "1D":
-        cutoff = now - timedelta(days=1)
+        cutoff_str = (now - timedelta(hours=24)).strftime("%Y-%m-%d")
     elif range == "1W":
-        cutoff = now - timedelta(weeks=1)
+        cutoff_str = (now - timedelta(weeks=1)).strftime("%Y-%m-%d")
     elif range == "1M":
-        cutoff = now - timedelta(days=30)
+        cutoff_str = (now - timedelta(days=30)).strftime("%Y-%m-%d")
     elif range == "YTD":
-        cutoff = datetime(now.year, 1, 1)
+        cutoff_str = datetime(now.year, 1, 1).strftime("%Y-%m-%d")
     elif range == "1Y":
-        cutoff = now - timedelta(days=365)
+        cutoff_str = (now - timedelta(days=365)).strftime("%Y-%m-%d")
     else:  # Max
-        cutoff = datetime(2000, 1, 1)
-
-    cutoff_str = cutoff.strftime("%Y-%m-%d")
+        cutoff_str = "2000-01-01"
 
     result = await db.execute(
         select(PortfolioSnapshot)
@@ -277,23 +313,15 @@ async def chart_data(
         .order_by(PortfolioSnapshot.snapshot_date)
     )
     snapshots = result.scalars().all()
-
     points = [
-        {"date": s.snapshot_date, "value": s.total_value}
+        {"date": s.snapshot_date, "value": s.total_value, "holdings": s.portfolio_value}
         for s in snapshots
     ]
 
-    # If no history yet, return single current point so chart isn't empty
+    # Fallback: return single current point so chart isn't empty
     if not points:
-        holdings_result = await db.execute(select(Holding).where(Holding.user_id == user.id))
-        holdings = holdings_result.scalars().all()
-        portfolio_value = sum(h.quantity * h.current_price for h in holdings)
-
-        cash_result = await db.execute(select(CashBalance).where(CashBalance.user_id == user.id))
-        cash = cash_result.scalar_one_or_none()
-        cash_balance = cash.balance if cash else 0.0
-
-        points = [{"date": now.strftime("%Y-%m-%d"), "value": round(portfolio_value + cash_balance, 2)}]
+        portfolio_value, cash_balance = await _compute_values(db, user.id)
+        points = [{"date": now.strftime("%Y-%m-%d"), "value": round(portfolio_value + cash_balance, 2), "holdings": round(portfolio_value, 2)}]
 
     return {"range": range, "points": points}
 

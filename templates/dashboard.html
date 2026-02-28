@@ -74,6 +74,11 @@
   .action-btn:hover{border-color:var(--red);color:var(--red);}
   .update-price-btn{background:none;border:none;color:var(--muted);cursor:pointer;font-family:var(--font-mono);font-size:11px;padding:0;transition:color 0.15s;text-decoration:underline;text-underline-offset:2px;}
   .update-price-btn:hover{color:var(--accent2);}
+  .notes-display{font-size:10px;color:var(--muted);font-family:var(--font-mono);margin-top:2px;cursor:pointer;min-height:14px;}
+  .notes-display:hover{color:var(--text);}
+  .notes-display.empty::before{content:'+ note';opacity:0.35;}
+  .notes-input{font-size:10px;font-family:var(--font-mono);background:var(--bg);border:1px solid var(--border);color:var(--text);padding:2px 6px;width:100%;margin-top:2px;outline:none;border-radius:0;}
+  .notes-input:focus{border-color:var(--accent);}
   .empty-state{padding:60px 20px;text-align:center;color:var(--muted);font-family:var(--font-mono);font-size:13px;}
 
   /* Sidebar */
@@ -88,6 +93,13 @@
   .btn:hover{opacity:0.9;}
   .btn:active{transform:scale(0.99);}
   .btn:disabled{opacity:0.5;cursor:not-allowed;}
+
+  /* Allocation donut */
+  .donut-wrap{position:relative;width:220px;height:220px;margin:20px auto 16px;}
+  .donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;text-align:center;padding:0 32px;}
+  .donut-center-name{font-size:10px;color:var(--muted);font-family:var(--font-mono);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;line-height:1.5;word-break:break-word;}
+  .donut-center-value{font-size:20px;font-weight:700;font-family:var(--font-mono);color:var(--text);letter-spacing:-0.02em;}
+  .donut-center-pct{font-size:11px;font-family:var(--font-mono);color:var(--muted);margin-top:3px;}
 
   /* Cash Widget */
   .cash-widget{background:var(--surface);border:1px solid var(--border);padding:20px;}
@@ -188,6 +200,10 @@
   .last-updated{font-family:var(--font-mono);font-size:10px;color:var(--muted);}
   .chart-canvas-wrap{position:relative;height:220px;width:100%;}
   canvas#portfolio-chart{width:100%!important;height:100%!important;}
+  .view-btns{display:flex;gap:2px;}
+  .view-btn{background:none;border:1px solid transparent;color:var(--muted);padding:5px 10px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;cursor:pointer;border-radius:2px;transition:all 0.15s;}
+  .view-btn:hover{color:var(--text);}
+  .view-btn.active{background:var(--surface2);border-color:var(--border);color:var(--accent);}
   @keyframes spin{to{transform:rotate(360deg);}}
   @keyframes fadeUp{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:translateY(0);}}
 
@@ -243,12 +259,17 @@
   <div class="chart-section">
     <div class="chart-header">
       <div class="chart-title-block">
-        <div class="chart-label">Total Portfolio Value · SAR</div>
+        <div class="chart-label" id="chart-label">Total Portfolio Value · SAR</div>
         <div class="chart-value" id="chart-display-value">—</div>
         <div class="chart-change" id="chart-display-change"></div>
       </div>
       <div class="chart-controls">
+        <div class="view-btns">
+          <button class="view-btn active" onclick="setView('total')">Total</button>
+          <button class="view-btn" onclick="setView('holdings')">Holdings</button>
+        </div>
         <div class="range-btns">
+          <button class="range-btn" onclick="setRange('1D')">1D</button>
           <button class="range-btn" onclick="setRange('1W')">1W</button>
           <button class="range-btn active" onclick="setRange('1M')">1M</button>
           <button class="range-btn" onclick="setRange('YTD')">YTD</button>
@@ -312,6 +333,19 @@
         </div>
       </div>
 
+      <!-- Allocation Donut -->
+      <div class="panel" id="allocation-panel" style="display:none;">
+        <div class="panel-header"><span class="panel-title">Allocation</span></div>
+        <div class="donut-wrap">
+          <canvas id="allocation-chart"></canvas>
+          <div class="donut-center" id="donut-center">
+            <div class="donut-center-name" id="donut-name">Holdings</div>
+            <div class="donut-center-value" id="donut-value">—</div>
+            <div class="donut-center-pct" id="donut-pct"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-header"><span class="panel-title">New Investment</span></div>
         <div class="form-body">
@@ -320,6 +354,7 @@
             <div class="ticker-search-wrap" id="ticker-search-wrap">
               <div class="ticker-input-row">
                 <input type="text" id="f-name" placeholder="e.g. AAPL, 2222.SR, BTC" autocomplete="off" onkeydown="onTickerKeydown(event)">
+                <input type="hidden" id="f-ticker">
                 <button class="search-btn" id="ticker-search-btn" onclick="runTickerSearch()" title="Search Yahoo Finance">⌕ Search</button>
               </div>
               <div class="search-dropdown" id="search-dropdown"></div>
@@ -592,10 +627,15 @@ function renderHoldings() {
   const tbody = document.getElementById('holdings-tbody');
   const empty = document.getElementById('holdings-empty');
   const wrap  = document.getElementById('holdings-wrap');
+  renderAllocationChart(holdings);
   if (!holdings.length) { empty.style.display='block'; wrap.style.display='none'; return; }
   empty.style.display='none'; wrap.style.display='block';
 
-  const usdRate = CURRENCY_RATES['USD'] || 3.75;  // SAR per 1 USD → divide to get USD
+  const usdRate = CURRENCY_RATES['USD'] || 3.75;
+
+  // Table-safe formatters — use ASCII "SAR" to avoid Arabic RTL glitches in cells
+  const tFmt  = n => 'SAR ' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  const tSub  = n => `<div style="font-size:10px;color:var(--muted);margin-top:1px;">USD ${Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>`;
 
   tbody.innerHTML = holdings.map(h => {
     const mv  = h.quantity * h.current_price;
@@ -604,30 +644,28 @@ function renderHoldings() {
     const pct = cb > 0 ? pnl/cb*100 : 0;
     const pc  = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
 
-    // USD equivalents (SAR ÷ rate)
-    const avgCostUSD    = h.avg_cost     / usdRate;
-    const tcUSD         = cb             / usdRate;  // total cost in USD
-    const curPriceUSD   = h.current_price / usdRate;
-    const mvUSD         = mv              / usdRate;
-    const pnlUSD        = pnl             / usdRate;
-
-    const usdSub = n => `<div style="font-size:10px;color:var(--muted);font-family:var(--font-mono);margin-top:1px;">USD ${Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>`;
-    const pnlUsdSub = `<div style="font-size:10px;color:var(--muted);font-family:var(--font-mono);margin-top:1px;">${pnl>=0?'+':'-'}USD ${Math.abs(pnlUSD).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>`;
+    const usdRate2 = usdRate;
+    const pnlSign  = pnl >= 0 ? '+' : '-';
+    const pctSign  = pct >= 0 ? '+' : '';
 
     return `<tr>
       <td>
         <div class="asset-name">${esc(h.name)}<span class="asset-type-badge">${esc(h.asset_type)}</span></div>
-        ${h.notes ? `<div style="font-size:10px;color:var(--muted);font-family:var(--font-mono);margin-top:2px;">${esc(h.notes)}</div>` : ''}
+        <div class="notes-display${h.notes ? '' : ' empty'}" id="notes-${h.id}" onclick="startEditNotes(${h.id})">${h.notes ? esc(h.notes) : ''}</div>
       </td>
       <td>${h.quantity.toLocaleString('en-US',{maximumFractionDigits:6})}</td>
-      <td>${fmt(h.avg_cost)}${usdSub(avgCostUSD)}</td>
-      <td>${fmt(cb)}${usdSub(tcUSD)}</td>
+      <td>${tFmt(h.avg_cost)}${tSub(h.avg_cost / usdRate2)}</td>
+      <td>${tFmt(cb)}${tSub(cb / usdRate2)}</td>
       <td>
-        ${fmt(h.current_price)}${usdSub(curPriceUSD)}
+        ${tFmt(h.current_price)}${tSub(h.current_price / usdRate2)}
         <button class="update-price-btn" onclick="openPriceModal(${h.id},'${esc(h.name)}',${h.current_price},${h.avg_cost})">update</button>
       </td>
-      <td>${fmt(mv)}${usdSub(mvUSD)}</td>
-      <td class="${pc}">${fmtS(pnl)}${pnlUsdSub}<span style="font-size:10px;">${fmtP(pct)}</span></td>
+      <td>${tFmt(mv)}${tSub(mv / usdRate2)}</td>
+      <td class="${pc}">
+        <div style="font-weight:600;white-space:nowrap;">${pnlSign}${tFmt(pnl)}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:1px;">${pnlSign}USD ${Math.abs(pnl/usdRate2).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+        <div style="font-size:11px;margin-top:1px;">${pctSign}${pct.toFixed(2)}%</div>
+      </td>
       <td><div class="row-actions"><button class="action-btn" onclick="openSellModal(${h.id},'${esc(h.name)}',${h.avg_cost},${h.quantity},${h.current_price})">Sell</button></div></td>
     </tr>`;
   }).join('');
@@ -774,6 +812,7 @@ function clearTickerValidation() {
   tickerValidated = false;
   document.getElementById('ticker-badge').className = 'ticker-badge';
   document.getElementById('ticker-badge-text').textContent = '';
+  document.getElementById('f-ticker').value = '';
 }
 
 function onAssetTypeChange() {
@@ -798,6 +837,7 @@ function onAssetTypeChange() {
 // ── Add Investment ────────────────────────────────────────────────────────────
 async function addInvestment() {
   const name     = document.getElementById('f-name').value.trim();
+  const ticker   = document.getElementById('f-ticker').value.trim() || null;
   const type     = document.getElementById('f-type').value;
   const qty      = parseFloat(document.getElementById('f-qty').value);
   const rawPrice = parseFloat(document.getElementById('f-price').value);
@@ -832,6 +872,7 @@ async function addInvestment() {
   try {
     await api('POST', '/api/portfolio/holdings', {
       name,
+      ticker,
       asset_type: type,
       quantity: qty,
       avg_cost: sarPrice,
@@ -844,8 +885,9 @@ async function addInvestment() {
     notify(`Added ${qty} × ${name} @ ${fmt(sarPrice)}${currencyNote}`);
 
     // Reset form
-    document.getElementById('f-name').value = '';
-    document.getElementById('f-qty').value = '';
+    document.getElementById('f-name').value   = '';
+    document.getElementById('f-ticker').value = '';
+    document.getElementById('f-qty').value    = '';
     document.getElementById('f-price').value = '';
     document.getElementById('f-notes').value = '';
     document.getElementById('f-currency').value = 'SAR';
@@ -1095,7 +1137,7 @@ async function runTickerSearch() {
       const typeTag = r.type ? `<span style="font-size:9px;padding:1px 5px;background:rgba(200,245,90,0.08);border:1px solid rgba(200,245,90,0.2);color:var(--accent);border-radius:2px;margin-left:5px;">${esc(r.type)}</span>` : '';
       const currTag = r.currency ? `<span style="color:var(--muted);font-size:10px;"> · ${esc(r.currency)}</span>` : '';
       return `
-      <div class="search-result-item" id="sri-${esc(r.symbol)}" onclick="selectTicker('${esc(r.symbol)}','${esc(r.currency||'')}')">
+      <div class="search-result-item" id="sri-${esc(r.symbol)}" onclick="selectTicker('${esc(r.symbol)}','${esc(r.currency||'')}','${esc(r.name||'')}')">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
           <div style="min-width:0;">
             <div class="sri-symbol">${esc(r.symbol)}${typeTag}</div>
@@ -1116,10 +1158,12 @@ async function runTickerSearch() {
   }
 }
 
-async function selectTicker(symbol, nativeCurrency) {
-  // For crypto stored as e.g. "ETH-USD", display/store just "ETH"
-  const displayName = symbol.replace(/-USD$/i, '').replace(/-USDT$/i, '');
-  document.getElementById('f-name').value = displayName;
+async function selectTicker(symbol, nativeCurrency, companyName) {
+  // Use company name if available, otherwise fall back to ticker symbol
+  const tickerFallback = symbol.replace(/-USD$/i, '').replace(/-USDT$/i, '');
+  const displayName = (companyName && companyName.trim()) ? companyName.trim() : tickerFallback;
+  document.getElementById('f-name').value   = displayName;
+  document.getElementById('f-ticker').value = symbol;  // always store the raw symbol
 
   // Show loading state in the price cell
   const priceEl = document.getElementById(`srip-${symbol}`);
@@ -1248,9 +1292,84 @@ async function deleteTransaction(txId) {
 // ── Utils ─────────────────────────────────────────────────────────────────────
 function today() { return new Date().toISOString().slice(0,10); }
 
+// ── Allocation Donut ──────────────────────────────────────────────────────────
+let allocationChart = null;
+
+const DONUT_COLORS = [
+  '#4ecca3','#7ec8e3','#b5b9ff','#c8f55a','#ffd166',
+  '#ef767a','#56cfe1','#c77dff','#06d6a0','#ffa552',
+];
+
+// Plain ASCII formatter for donut center — avoids Arabic RTL glitches
+const fmtSAR = n => 'SAR ' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+function renderAllocationChart(h) {
+  const panel = document.getElementById('allocation-panel');
+  if (!h || !h.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+
+  const labels = h.map(x => x.name);
+  const values = h.map(x => x.quantity * x.current_price);
+  const total  = values.reduce((a, b) => a + b, 0);
+  const colors = h.map((_, i) => DONUT_COLORS[i % DONUT_COLORS.length]);
+
+  const resetCenter = () => {
+    document.getElementById('donut-name').textContent  = 'Holdings';
+    document.getElementById('donut-value').textContent = fmtSAR(total);
+    document.getElementById('donut-pct').textContent   = '';
+  };
+  resetCenter();
+
+  const ctx = document.getElementById('allocation-chart').getContext('2d');
+
+  if (allocationChart) {
+    allocationChart.data.labels            = labels;
+    allocationChart.data.datasets[0].data  = values;
+    allocationChart.data.datasets[0].backgroundColor = colors;
+    allocationChart.update('active');
+    return;
+  }
+
+  allocationChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: colors,
+        borderColor: '#0d0d14',
+        borderWidth: 3,
+        hoverOffset: 8,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      cutout: '70%',
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: false },
+      },
+      onHover: (_, elements) => {
+        if (elements.length) {
+          const i   = elements[0].index;
+          const pct = total > 0 ? values[i] / total * 100 : 0;
+          document.getElementById('donut-name').textContent  = labels[i];
+          document.getElementById('donut-value').textContent = fmtSAR(values[i]);
+          document.getElementById('donut-pct').textContent   = pct.toFixed(2) + '%';
+        } else {
+          resetCenter();
+        }
+      },
+    },
+  });
+}
+
 // ── Chart ─────────────────────────────────────────────────────────────────────
-let portfolioChart = null;
-let activeRange = '1M';
+let portfolioChart  = null;
+let activeRange     = '1M';
+let activeView      = 'total';   // 'total' | 'holdings'
+let lastChartPoints = [];
 
 function setRange(range) {
   activeRange = range;
@@ -1260,10 +1379,21 @@ function setRange(range) {
   loadChart();
 }
 
+function setView(view) {
+  activeView = view;
+  document.querySelectorAll('.view-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent.toLowerCase() === view);
+  });
+  const label = view === 'total' ? 'Total Portfolio Value · SAR' : 'Holdings Value · SAR';
+  document.getElementById('chart-label').textContent = label;
+  if (lastChartPoints.length) renderChart(lastChartPoints);
+}
+
 async function loadChart() {
   try {
     const data = await api('GET', `/api/prices/chart?range=${activeRange}`);
     if (!data || !data.points) return;
+    lastChartPoints = data.points;
     renderChart(data.points);
   } catch(e) {
     console.warn('Chart load failed:', e.message);
@@ -1272,7 +1402,7 @@ async function loadChart() {
 
 function renderChart(points) {
   const labels = points.map(p => p.date);
-  const values = points.map(p => p.value);
+  const values = points.map(p => activeView === 'holdings' ? (p.holdings ?? p.value) : p.value);
 
   // Update header display
   if (values.length > 0) {
@@ -1377,6 +1507,42 @@ function renderChart(points) {
       }
     }
   });
+}
+
+// ── Notes inline edit ─────────────────────────────────────────────────────────
+function startEditNotes(id) {
+  const display = document.getElementById(`notes-${id}`);
+  if (!display || display.querySelector('input')) return; // already editing
+
+  const current = display.classList.contains('empty') ? '' : display.textContent;
+  display.innerHTML = `<input class="notes-input" id="notes-input-${id}" type="text" value="${esc(current)}" placeholder="Add a note…" maxlength="200">`;
+  const input = document.getElementById(`notes-input-${id}`);
+  input.focus();
+  input.select();
+
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  { e.preventDefault(); saveNotes(id, input.value.trim()); }
+    if (e.key === 'Escape') { renderHoldings(); }
+  });
+  input.addEventListener('blur', () => saveNotes(id, input.value.trim()));
+}
+
+async function saveNotes(id, text) {
+  // Update local holdings array immediately
+  const h = holdings.find(x => x.id === id);
+  if (h) h.notes = text || null;
+
+  // Re-render to exit edit mode
+  renderHoldings();
+
+  try {
+    await api('PATCH', `/api/portfolio/holdings/${id}/notes`, { notes: text || null });
+  } catch(e) {
+    notify('Failed to save note: ' + e.message, true);
+    // Revert on error
+    if (h) h.notes = null;
+    renderHoldings();
+  }
 }
 
 // ── Price Refresh ─────────────────────────────────────────────────────────────

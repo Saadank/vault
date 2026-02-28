@@ -9,6 +9,7 @@ Or in production:
     uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
 """
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -20,19 +21,45 @@ from fastapi.templating import Jinja2Templates
 # Ensure static directory exists (Railway/Docker may not have it)
 os.makedirs("static", exist_ok=True)
 
-from app.database import init_db
+from app.database import init_db, SessionLocal, User
 from app.auth import get_current_user_optional
 from app.routers import auth, portfolio, cash, prices
+from app.routers.prices import _take_hourly_snapshot
+from sqlalchemy import select
 
 # Show INFO logs from our app modules in the uvicorn console
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("app").setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+async def _hourly_snapshot_loop():
+    """Background task: take an hourly snapshot for every user."""
+    while True:
+        await asyncio.sleep(3600)  # wait 1 hour
+        try:
+            async with SessionLocal() as db:
+                result = await db.execute(select(User))
+                users = result.scalars().all()
+                for user in users:
+                    try:
+                        await _take_hourly_snapshot(db, user.id)
+                    except Exception as e:
+                        logger.warning(f"Hourly snapshot failed for user {user.id}: {e}")
+        except Exception as e:
+            logger.error(f"Hourly snapshot loop error: {e}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()          # create tables on startup
+    task = asyncio.create_task(_hourly_snapshot_loop())
     yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(

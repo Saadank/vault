@@ -33,6 +33,7 @@ class Token(BaseModel):
 # ── Holdings ──────────────────────────────────────────────────────────────────
 class HoldingCreate(BaseModel):
     name:          str   = Field(..., min_length=1, max_length=100)
+    ticker:        Optional[str] = Field(None, max_length=50)
     asset_type:    str   = Field(..., max_length=50)
     quantity:      float = Field(..., gt=0)
     avg_cost:      float = Field(..., gt=0)
@@ -46,9 +47,14 @@ class HoldingUpdate(BaseModel):
     avg_cost:      Optional[float] = Field(None, gt=0)
 
 
+class NotesUpdate(BaseModel):
+    notes: Optional[str] = None
+
+
 class HoldingOut(BaseModel):
     id:            int
     name:          str
+    ticker:        Optional[str]
     asset_type:    str
     quantity:      float
     avg_cost:      float

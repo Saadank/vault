@@ -10,7 +10,7 @@ from datetime import datetime
 from app.database import get_db, User, Holding, Transaction, CashBalance
 from app.auth import get_current_user
 from app.schemas import (
-    HoldingCreate, HoldingOut, HoldingUpdate,
+    HoldingCreate, HoldingOut, HoldingUpdate, NotesUpdate,
     SellRequest, TransactionOut, PortfolioSummary
 )
 
@@ -106,6 +106,7 @@ async def add_holding(
         holding = Holding(
             user_id=user.id,
             name=data.name,
+            ticker=data.ticker,
             asset_type=data.asset_type,
             quantity=data.quantity,
             avg_cost=data.avg_cost,
@@ -165,6 +166,26 @@ async def update_price(
     return holding
 
 
+@router.patch("/holdings/{holding_id}/notes", response_model=HoldingOut)
+async def update_notes(
+    holding_id: int,
+    data: NotesUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Holding).where(Holding.id == holding_id, Holding.user_id == user.id)
+    )
+    holding = result.scalar_one_or_none()
+    if not holding:
+        raise HTTPException(404, "Holding not found")
+
+    holding.notes = data.notes or None
+    await db.commit()
+    await db.refresh(holding)
+    return holding
+
+
 @router.delete("/holdings/{holding_id}", status_code=204)
 async def delete_holding(
     holding_id: int,
@@ -177,7 +198,7 @@ async def delete_holding(
     holding = result.scalar_one_or_none()
     if not holding:
         raise HTTPException(404, "Holding not found")
-    await db.delete(holding)
+    db.delete(holding)
     await db.commit()
 
 
@@ -207,7 +228,7 @@ async def sell_holding(
     holding.current_price  = data.price
 
     if holding.quantity <= 1e-9:  # fully closed
-        await db.delete(holding)
+        db.delete(holding)
     
     # Add proceeds to cash
     cash = await get_cash(db, user.id)

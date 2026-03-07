@@ -219,33 +219,25 @@ async def _take_hourly_snapshot(db: AsyncSession, user_id: int):
     await db.commit()
 
 
-# ── Refresh prices ────────────────────────────────────────────────────────────
-@router.post("/refresh")
-async def refresh_prices(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
+# ── Helper: fetch live prices and update holdings in DB ───────────────────────
+async def _refresh_holding_prices(db: AsyncSession, user_id: int) -> dict:
     """
-    Fetch latest prices from Yahoo Finance for all holdings that look like
-    market tickers (Stocks, ETFs, Crypto).
-    Alternative / Real Estate / Bond holdings are skipped (no ticker).
-    Returns a summary of what was updated.
+    Fetch latest prices from Yahoo Finance for all stock/etf/crypto holdings
+    and update current_price in DB. Returns summary dict.
     """
-    result = await db.execute(select(Holding).where(Holding.user_id == user.id))
+    result = await db.execute(select(Holding).where(Holding.user_id == user_id))
     holdings = result.scalars().all()
 
-    # Only auto-fetch for asset types that have market tickers
     fetchable_types = {"stock", "etf", "crypto"}
-    # Use ticker if set, otherwise fall back to name (legacy holdings)
     to_fetch = [
         (h.ticker or h.name, h.asset_type)
         for h in holdings
         if h.asset_type.lower() in fetchable_types
     ]
 
-    updated = []
-    skipped = []
-    failed  = []
+    updated: list = []
+    skipped: list = []
+    failed:  list = []
 
     if to_fetch:
         prices = await fetch_prices_bulk(to_fetch)
@@ -261,18 +253,36 @@ async def refresh_prices(
                 h.current_price = round(new_price, 6)
                 updated.append({"name": h.name, "price": h.current_price})
             else:
-                logger.warning(f"[refresh] Failed to get price for '{symbol}' (holding='{h.name}', type={h.asset_type})")
+                logger.warning(
+                    f"[refresh] No price for '{symbol}' "
+                    f"(holding='{h.name}', type={h.asset_type})"
+                )
                 failed.append(h.name)
 
         await db.commit()
+
+    return {"updated": updated, "skipped": skipped, "failed": failed}
+
+
+# ── Refresh prices ────────────────────────────────────────────────────────────
+@router.post("/refresh")
+async def refresh_prices(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Fetch latest prices from Yahoo Finance for all holdings that look like
+    market tickers (Stocks, ETFs, Crypto).
+    Alternative / Real Estate / Bond holdings are skipped (no ticker).
+    Returns a summary of what was updated.
+    """
+    summary = await _refresh_holding_prices(db, user.id)
 
     # Always take a snapshot after refresh (captures current state)
     await _take_snapshot(db, user.id)
 
     return {
-        "updated": updated,
-        "skipped": skipped,
-        "failed": failed,
+        **summary,
         "refreshed_at": datetime.utcnow().isoformat(),
     }
 

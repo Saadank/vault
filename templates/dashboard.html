@@ -1674,22 +1674,26 @@ function renderChart(points) {
 
   const ctx = document.getElementById('portfolio-chart').getContext('2d');
 
+  // Always destroy and recreate — ensures all visual properties (pointRadius etc.) are fresh
+  if (portfolioChart) { portfolioChart.destroy(); portfolioChart = null; }
+
   const isPositive = values.length < 2 || values[values.length - 1] >= values[0];
   const lineColor  = isPositive ? '#d4a843' : '#f06a6a';
+  const fillColor  = isPositive ? 'rgba(212,168,67,0.07)' : 'rgba(240,106,106,0.07)';
 
-  const gradient = ctx.createLinearGradient(0, 0, 0, 230);
-  gradient.addColorStop(0, isPositive ? 'rgba(212,168,67,0.16)' : 'rgba(240,106,106,0.16)');
+  // Zoom y-axis into the actual data range so small changes are clearly visible
+  const minVal = Math.min(...values);
+  const maxVal = Math.max(...values);
+  const range  = maxVal - minVal;
+  const yPad   = range > 0 ? range * 0.25 : maxVal * 0.05;
+  const yMin   = Math.max(0, minVal - yPad);
+  const yMax   = maxVal + yPad * 0.3;
+
+  // Gradient: very subtle fill so the line is the focus
+  const chartH = ctx.canvas.offsetHeight || 250;
+  const gradient = ctx.createLinearGradient(0, 0, 0, chartH);
+  gradient.addColorStop(0, fillColor);
   gradient.addColorStop(1, 'rgba(7,9,13,0)');
-
-  if (portfolioChart) {
-    portfolioChart.data.labels = labels;
-    portfolioChart.data.datasets[0].data = values;
-    portfolioChart.data.datasets[0].borderColor = lineColor;
-    portfolioChart.data.datasets[0].backgroundColor = gradient;
-    portfolioChart.data.datasets[0].pointBackgroundColor = lineColor;
-    portfolioChart.update('active');
-    return;
-  }
 
   portfolioChart = new Chart(ctx, {
     type: 'line',
@@ -1699,19 +1703,20 @@ function renderChart(points) {
         data: values,
         borderColor: lineColor,
         backgroundColor: gradient,
-        borderWidth: 2,
+        borderWidth: 1.5,
         fill: true,
-        tension: 0.35,
-        pointRadius: points.length === 1 ? 5 : 0,
-        pointHoverRadius: 6,
+        tension: 0.4,
+        pointRadius: 0,
+        pointHoverRadius: 4,
         pointBackgroundColor: lineColor,
-        pointBorderColor: '#07090d',
-        pointBorderWidth: 2,
+        pointBorderColor: lineColor,
+        pointBorderWidth: 0,
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      animation: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
@@ -1732,29 +1737,31 @@ function renderChart(points) {
       },
       scales: {
         x: {
-          grid: { color: 'rgba(28,40,64,0.55)', drawBorder: false },
+          grid: { color: 'rgba(28,40,64,0.4)', drawBorder: false },
           ticks: {
             color: '#4a6080',
             font: { family: 'JetBrains Mono', size: 10 },
-            maxTicksLimit: 7,
+            maxTicksLimit: 6,
             maxRotation: 0,
           },
           border: { display: false },
         },
         y: {
+          min: yMin,
+          max: yMax,
           position: 'right',
-          grid: { color: 'rgba(28,40,64,0.55)', drawBorder: false },
+          grid: { color: 'rgba(28,40,64,0.4)', drawBorder: false },
           ticks: {
             color: '#4a6080',
             font: { family: 'JetBrains Mono', size: 10 },
+            maxTicksLimit: 5,
             callback: v => {
-              // Use plain ASCII "SAR" on chart axis — Arabic ر.س causes RTL rendering glitches in Canvas
               const abs = Math.abs(v);
               let label;
-              if (abs >= 1_000_000)      label = (v / 1_000_000).toFixed(1) + 'M';
-              else if (abs >= 1_000)     label = (v / 1_000).toFixed(1) + 'K';
-              else                       label = v.toFixed(0);
-              return 'SAR ' + label;
+              if (abs >= 1_000_000)  label = (v / 1_000_000).toFixed(2) + 'M';
+              else if (abs >= 1_000) label = (v / 1_000).toFixed(1) + 'K';
+              else                   label = v.toFixed(0);
+              return label;
             },
           },
           border: { display: false },

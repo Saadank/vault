@@ -24,7 +24,7 @@ os.makedirs("static", exist_ok=True)
 from app.database import init_db, SessionLocal, User
 from app.auth import get_current_user_optional
 from app.routers import auth, portfolio, cash, prices
-from app.routers.prices import _take_hourly_snapshot
+from app.routers.prices import _take_hourly_snapshot, _refresh_holding_prices
 from sqlalchemy import select
 
 # Show INFO logs from our app modules in the uvicorn console
@@ -43,6 +43,7 @@ async def _hourly_snapshot_loop():
                 users = result.scalars().all()
                 for user in users:
                     try:
+                        await _refresh_holding_prices(db, user.id)
                         await _take_hourly_snapshot(db, user.id)
                     except Exception as e:
                         logger.warning(f"Hourly snapshot failed for user {user.id}: {e}")

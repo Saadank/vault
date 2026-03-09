@@ -12,6 +12,8 @@ Or in production:
 import asyncio
 import logging
 import os
+from dotenv import load_dotenv
+load_dotenv()  # loads .env locally; no-op on Railway where env vars are set directly
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -23,7 +25,7 @@ os.makedirs("static", exist_ok=True)
 
 from app.database import init_db, SessionLocal, User
 from app.auth import get_current_user_optional
-from app.routers import auth, portfolio, cash, prices
+from app.routers import auth, portfolio, cash, prices, chat
 from app.routers.prices import _take_hourly_snapshot, _refresh_holding_prices
 from sqlalchemy import select
 
@@ -79,6 +81,7 @@ app.include_router(auth.router)
 app.include_router(portfolio.router)
 app.include_router(cash.router)
 app.include_router(prices.router)
+app.include_router(chat.router)
 
 
 # ── Page routes ───────────────────────────────────────────────────────────────

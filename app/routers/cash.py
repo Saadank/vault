@@ -154,6 +154,11 @@ async def delete_transaction(
                 holding.avg_cost = max(remaining_cost / new_qty, 0) if new_qty > 0 else holding.avg_cost
                 reversal_detail = f"Reduced {tx.asset_name} by {tx.quantity} units"
 
+        # Return the original purchase cost to cash
+        cash = await get_or_create_cash(db, user.id)
+        cash.balance += tx.total
+        reversal_detail += f", returned {tx.total:.2f} SAR to cash"
+
     # ── SELL reversal ─────────────────────────────────────────────────────────
     elif tx.tx_type == "SELL" and tx.asset_name and tx.quantity and tx.price:
         proceeds = tx.total  # what was added to cash at sell time

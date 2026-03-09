@@ -714,6 +714,44 @@
   </div>
 </div>
 
+<!-- Buy More Modal -->
+<div class="modal-overlay" id="buy-more-modal">
+  <div class="modal">
+    <div class="modal-title">
+      Buy More — <span id="bm-name"></span>
+      <button class="modal-close" onclick="closeModal('buy-more-modal')">×</button>
+    </div>
+    <div style="margin-bottom:12px;">
+      <label style="font-size:10px;letter-spacing:0.08em;color:var(--muted);text-transform:uppercase;">Currency</label>
+      <select id="bm-currency" onchange="updateBuyMorePreview()" style="width:100%;margin-top:4px;padding:8px 6px;background:var(--surface2);border:1px solid var(--border2);color:var(--text);font-size:12px;font-family:var(--font-mono);">
+        <option value="SAR">SAR</option>
+        <option value="USD">USD $</option>
+        <option value="EUR">EUR €</option>
+        <option value="GBP">GBP £</option>
+        <option value="AED">AED</option>
+        <option value="KWD">KWD</option>
+      </select>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div class="form-group" style="margin:0;">
+        <label>Quantity</label>
+        <input type="number" id="bm-qty" step="any" placeholder="0" oninput="updateBuyMorePreview()">
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label>Price per unit</label>
+        <input type="number" id="bm-price" step="any" placeholder="0.00" oninput="updateBuyMorePreview()">
+        <div id="bm-price-preview" style="font-size:10px;color:var(--muted);margin-top:3px;min-height:14px;"></div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Date <span style="font-size:9px;color:var(--muted);">(optional)</span></label>
+      <input type="date" id="bm-date">
+    </div>
+    <div id="bm-cost-preview" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px;"></div>
+    <button class="btn" style="margin-top:14px;" onclick="executeBuyMore()">Record Purchase</button>
+  </div>
+</div>
+
 <!-- Update Holding Modal -->
 <div class="modal-overlay" id="price-modal">
   <div class="modal">
@@ -921,7 +959,7 @@ function renderHoldings() {
         <div style="font-size:10px;color:var(--muted);margin-top:1px;">${pnlSign}USD ${Math.abs(pnl/usdRate2).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
         <div style="font-size:11px;margin-top:1px;">${pctSign}${pct.toFixed(2)}%</div>
       </td>
-      <td><div class="row-actions"><button class="action-btn" onclick="openSellModal(${h.id},'${esc(h.name)}',${h.avg_cost},${h.quantity},${h.current_price})">Sell</button></div></td>
+      <td><div class="row-actions"><button class="action-btn" onclick="openBuyMoreModal(${h.id},'${esc(h.name)}','${esc(h.ticker||'')}','${esc(h.asset_type)}',${h.current_price})">Buy</button><button class="action-btn" onclick="openSellModal(${h.id},'${esc(h.name)}',${h.avg_cost},${h.quantity},${h.current_price})">Sell</button></div></td>
     </tr>`;
   }).join('');
 }
@@ -1164,6 +1202,63 @@ async function addInvestment() {
     updateCostPreview();
   });
 });
+
+// ── Buy More ──────────────────────────────────────────────────────────────────
+let buyMoreHolding = null;
+
+function openBuyMoreModal(id, name, ticker, assetType, currentPrice) {
+  buyMoreHolding = { id, name, ticker, assetType };
+  document.getElementById('bm-name').textContent  = name;
+  document.getElementById('bm-currency').value    = 'SAR';
+  document.getElementById('bm-qty').value         = '';
+  document.getElementById('bm-price').value       = parseFloat(currentPrice).toFixed(2);
+  document.getElementById('bm-date').value        = '';
+  document.getElementById('bm-cost-preview').textContent  = '';
+  document.getElementById('bm-price-preview').textContent = '';
+  updateBuyMorePreview();
+  openModal('buy-more-modal');
+}
+
+function updateBuyMorePreview() {
+  const cur   = document.getElementById('bm-currency').value;
+  const price = parseFloat(document.getElementById('bm-price').value);
+  const qty   = parseFloat(document.getElementById('bm-qty').value);
+  const pricePrev = document.getElementById('bm-price-preview');
+  if (price > 0 && cur !== 'SAR') {
+    const sar = toSAR(price, cur);
+    pricePrev.textContent = `= ر.س ${sar.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  } else { pricePrev.textContent = ''; }
+  const costPrev = document.getElementById('bm-cost-preview');
+  if (price > 0 && qty > 0) {
+    const total = toSAR(price, cur) * qty;
+    costPrev.textContent = `Total cost: ${fmt(total)}`;
+  } else { costPrev.textContent = ''; }
+}
+
+async function executeBuyMore() {
+  const cur      = document.getElementById('bm-currency').value;
+  const rawPrice = parseFloat(document.getElementById('bm-price').value);
+  const qty      = parseFloat(document.getElementById('bm-qty').value);
+  const date     = document.getElementById('bm-date').value;
+  if (!qty || qty <= 0)           return notify('Enter a valid quantity.', true);
+  if (!rawPrice || rawPrice <= 0) return notify('Enter a valid price.', true);
+  const sarPrice = toSAR(rawPrice, cur);
+  try {
+    await api('POST', '/api/portfolio/holdings', {
+      name:          buyMoreHolding.name,
+      ticker:        buyMoreHolding.ticker || null,
+      asset_type:    buyMoreHolding.assetType,
+      quantity:      qty,
+      avg_cost:      sarPrice,
+      current_price: sarPrice,
+      purchase_date: date || null,
+    });
+    closeModal('buy-more-modal');
+    const note = cur !== 'SAR' ? ` (${cur} → SAR @ ${CURRENCY_RATES[cur]})` : '';
+    notify(`Bought ${qty} × ${buyMoreHolding.name} @ ${fmt(sarPrice)}${note}`);
+    await loadAll();
+  } catch(e) { notify(e.message, true); }
+}
 
 // ── Sell ──────────────────────────────────────────────────────────────────────
 function openSellModal(id, name, avgCost, maxQty, curPrice) {

@@ -844,24 +844,29 @@ function renderScoreTable() {
 
 // ── Load all ──────────────────────────────────────────────────────────────────
 async function loadAll() {
-  try {
-    const [overview, allocation, pnl, txActivity, cashflow, scoreboard] = await Promise.all([
-      api('GET', '/api/analytics/overview'),
-      api('GET', '/api/analytics/allocation'),
-      api('GET', '/api/analytics/pnl'),
-      api('GET', '/api/analytics/transactions'),
-      api('GET', '/api/analytics/cashflow'),
-      api('GET', '/api/analytics/scoreboard'),
-    ]);
-    if (overview)    renderOverview(overview);
-    if (allocation)  renderAllocation(allocation);
-    if (pnl)         renderPnl(pnl);
-    if (txActivity)  renderTransactions(txActivity);
-    if (cashflow)    renderCashflow(cashflow);
-    if (scoreboard)  renderScoreboard(scoreboard);
-  } catch(e) {
-    console.error('Analytics load error:', e);
-  }
+  // Promise.allSettled: one failing endpoint never silences the rest
+  const [overview, allocation, pnl, txActivity, cashflow, scoreboard] = await Promise.allSettled([
+    api('GET', '/api/analytics/overview'),
+    api('GET', '/api/analytics/allocation'),
+    api('GET', '/api/analytics/pnl'),
+    api('GET', '/api/analytics/transactions'),
+    api('GET', '/api/analytics/cashflow'),
+    api('GET', '/api/analytics/scoreboard'),
+  ]);
+
+  const val = r => r.status === 'fulfilled' ? r.value : null;
+  const err = (label, r) => { if (r.status === 'rejected') console.error(`Analytics [${label}]:`, r.reason); };
+
+  err('overview', overview); err('allocation', allocation);
+  err('pnl', pnl);           err('transactions', txActivity);
+  err('cashflow', cashflow); err('scoreboard', scoreboard);
+
+  const ov = val(overview);    if (ov)  renderOverview(ov);
+  const al = val(allocation);  if (al)  renderAllocation(al);
+  const pl = val(pnl);         if (pl)  renderPnl(pl);
+  const tx = val(txActivity);  if (tx)  renderTransactions(tx);
+  const cf = val(cashflow);    if (cf)  renderCashflow(cf);
+  const sc = val(scoreboard);  if (sc)  renderScoreboard(sc);
 }
 
 // ── Logout ────────────────────────────────────────────────────────────────────

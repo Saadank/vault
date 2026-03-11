@@ -54,6 +54,24 @@ async def init_db():
             await conn.execute(text("ALTER TABLE holdings ADD COLUMN ticker VARCHAR(50)"))
         except Exception:
             pass  # already exists
+        # Create holding_snapshots if not exists
+        # Safety net for Railway where create_all may silently skip new tables
+        try:
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS holding_snapshots (
+                    id            SERIAL PRIMARY KEY,
+                    user_id       INTEGER NOT NULL REFERENCES users(id),
+                    snapshot_date VARCHAR(10) NOT NULL,
+                    name          VARCHAR(100) NOT NULL,
+                    asset_type    VARCHAR(50) NOT NULL,
+                    quantity      FLOAT NOT NULL,
+                    avg_cost      FLOAT NOT NULL,
+                    current_price FLOAT NOT NULL,
+                    created_at    TIMESTAMP DEFAULT NOW()
+                )
+            """))
+        except Exception:
+            pass  # SQLite uses create_all; PostgreSQL: table already exists
 
 
 # ── Models ────────────────────────────────────────────────────────────────────

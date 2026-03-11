@@ -34,8 +34,10 @@ async def portfolio_summary(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    # Holdings
-    result = await db.execute(select(Holding).where(Holding.user_id == user.id))
+    # Holdings (exclude any zero-quantity rows left by float rounding)
+    result = await db.execute(
+        select(Holding).where(Holding.user_id == user.id, Holding.quantity > 0)
+    )
     holdings = result.scalars().all()
 
     portfolio_value = sum(h.quantity * h.current_price for h in holdings)
@@ -73,7 +75,9 @@ async def list_holdings(
     user: User = Depends(get_current_user),
 ):
     result = await db.execute(
-        select(Holding).where(Holding.user_id == user.id).order_by(Holding.created_at)
+        select(Holding)
+        .where(Holding.user_id == user.id, Holding.quantity > 0)
+        .order_by(Holding.created_at)
     )
     return result.scalars().all()
 
@@ -227,7 +231,7 @@ async def sell_holding(
     holding.quantity      -= data.quantity
     holding.current_price  = data.price
 
-    if holding.quantity <= 1e-9:  # fully closed
+    if holding.quantity < 0.00001:  # fully closed (generous threshold for float rounding)
         db.delete(holding)
     
     # Add proceeds to cash

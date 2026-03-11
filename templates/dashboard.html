@@ -1053,7 +1053,7 @@ function renderHoldings() {
   const tFmt  = n => 'SAR ' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
   const tSub  = n => `<div style="font-size:10px;color:var(--muted);margin-top:1px;">USD ${Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>`;
 
-  tbody.innerHTML = holdings.map(h => {
+  tbody.innerHTML = holdings.filter(h => h.quantity > 0).map(h => {
     const mv  = h.quantity * h.current_price;
     const cb  = h.quantity * h.avg_cost;
     const pnl = mv - cb;

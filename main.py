@@ -25,8 +25,8 @@ os.makedirs("static", exist_ok=True)
 
 from app.database import init_db, SessionLocal, User
 from app.auth import get_current_user_optional
-from app.routers import auth, portfolio, cash, prices, chat
-from app.routers.prices import _take_hourly_snapshot, _refresh_holding_prices
+from app.routers import auth, portfolio, cash, prices, chat, analytics
+from app.routers.prices import _take_hourly_snapshot, _refresh_holding_prices, _take_holding_snapshot
 from sqlalchemy import select
 
 # Show INFO logs from our app modules in the uvicorn console
@@ -47,6 +47,7 @@ async def _hourly_snapshot_loop():
                     try:
                         await _refresh_holding_prices(db, user.id)
                         await _take_hourly_snapshot(db, user.id)
+                        await _take_holding_snapshot(db, user.id)
                     except Exception as e:
                         logger.warning(f"Hourly snapshot failed for user {user.id}: {e}")
         except Exception as e:
@@ -82,6 +83,7 @@ app.include_router(portfolio.router)
 app.include_router(cash.router)
 app.include_router(prices.router)
 app.include_router(chat.router)
+app.include_router(analytics.router)
 
 
 # ── Page routes ───────────────────────────────────────────────────────────────
@@ -111,3 +113,10 @@ async def dashboard(request: Request, user=Depends(get_current_user_optional)):
     if not user:
         return RedirectResponse("/login")
     return templates.TemplateResponse("dashboard.html", {"request": request, "user": user})
+
+
+@app.get("/analytics", response_class=HTMLResponse)
+async def analytics_page(request: Request, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse("/login")
+    return templates.TemplateResponse("analytics.html", {"request": request, "user": user})

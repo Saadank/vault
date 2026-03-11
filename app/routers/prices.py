@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 from typing import Optional
 
-from app.database import get_db, User, Holding, CashBalance, PortfolioSnapshot
+from app.database import get_db, User, Holding, CashBalance, PortfolioSnapshot, HoldingSnapshot
 from app.auth import get_current_user
 from app.price_service import fetch_prices_bulk
 
@@ -158,8 +158,11 @@ async def _compute_values(db: AsyncSession, user_id: int):
 
 
 # ── Helper: take a daily portfolio snapshot ───────────────────────────────────
-async def _take_snapshot(db: AsyncSession, user_id: int):
-    """Record today's total portfolio value (YYYY-MM-DD key). Overwrites today's entry."""
+async def _take_snapshot(db: AsyncSession, user_id: int, overwrite: bool = True):
+    """Record today's total portfolio value (YYYY-MM-DD key).
+    overwrite=True (default): update existing entry (used after live price refresh).
+    overwrite=False: skip if entry already exists (used on page load to avoid stale spikes).
+    """
     portfolio_value, cash_balance = await _compute_values(db, user_id)
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
 
@@ -172,6 +175,8 @@ async def _take_snapshot(db: AsyncSession, user_id: int):
     snap = existing.scalar_one_or_none()
 
     if snap:
+        if not overwrite:
+            return  # page-load snapshot — never clobber existing daily entry
         snap.portfolio_value = round(portfolio_value, 2)
         snap.cash_balance    = round(cash_balance, 2)
         snap.total_value     = round(portfolio_value + cash_balance, 2)
@@ -215,6 +220,43 @@ async def _take_hourly_snapshot(db: AsyncSession, user_id: int):
             total_value=round(portfolio_value + cash_balance, 2),
         )
         db.add(snap)
+
+    await db.commit()
+
+
+# ── Helper: take a daily holding-level snapshot ───────────────────────────────
+async def _take_holding_snapshot(db: AsyncSession, user_id: int):
+    """
+    Record a daily snapshot of every open holding for historical allocation analysis.
+    Replaces today's entries so re-running (e.g. each hourly tick) stays idempotent.
+    """
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+
+    # Check if we already have today's entries — skip if present to avoid redundant DB writes
+    existing = await db.execute(
+        select(HoldingSnapshot).where(
+            HoldingSnapshot.user_id == user_id,
+            HoldingSnapshot.snapshot_date == today_str,
+        ).limit(1)
+    )
+    if existing.scalar_one_or_none():
+        return  # already taken today
+
+    result = await db.execute(
+        select(Holding).where(Holding.user_id == user_id, Holding.quantity > 0)
+    )
+    holdings = result.scalars().all()
+
+    for h in holdings:
+        db.add(HoldingSnapshot(
+            user_id=user_id,
+            snapshot_date=today_str,
+            name=h.name,
+            asset_type=h.asset_type,
+            quantity=round(h.quantity, 6),
+            avg_cost=round(h.avg_cost, 4),
+            current_price=round(h.current_price, 4),
+        ))
 
     await db.commit()
 
@@ -345,8 +387,10 @@ async def take_snapshot(
     """
     Retake today's snapshot using current holdings prices + current cash balance.
     Called on page load so the chart always reflects the latest cash changes.
+    Uses overwrite=False so it never replaces an existing daily snapshot with
+    potentially stale user-entered prices (prevents post-buy chart spikes).
     """
-    await _take_snapshot(db, user.id)
+    await _take_snapshot(db, user.id, overwrite=False)
     return {"ok": True}
 
 

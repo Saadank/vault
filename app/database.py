@@ -131,3 +131,18 @@ class PortfolioSnapshot(Base):
     cash_balance    = Column(Float, nullable=False, default=0.0)
     total_value     = Column(Float, nullable=False)        # portfolio + cash
     created_at      = Column(DateTime, default=datetime.utcnow)
+
+
+class HoldingSnapshot(Base):
+    """Daily snapshot of each individual holding for historical allocation analysis."""
+    __tablename__ = "holding_snapshots"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    user_id       = Column(Integer, ForeignKey("users.id"), nullable=False)
+    snapshot_date = Column(String(10), nullable=False)   # YYYY-MM-DD (daily only)
+    name          = Column(String(100), nullable=False)
+    asset_type    = Column(String(50), nullable=False)
+    quantity      = Column(Float, nullable=False)
+    avg_cost      = Column(Float, nullable=False)
+    current_price = Column(Float, nullable=False)
+    created_at    = Column(DateTime, default=datetime.utcnow)

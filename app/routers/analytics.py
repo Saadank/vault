@@ -152,12 +152,17 @@ async def analytics_allocation(
     ]
 
     # Historical by month from holding_snapshots
-    hs_result = await db.execute(
-        select(HoldingSnapshot)
-        .where(HoldingSnapshot.user_id == user.id)
-        .order_by(HoldingSnapshot.snapshot_date)
-    )
-    hs_rows = [r for r in hs_result.scalars().all() if r is not None]
+    # Wrapped in try/except: if the table doesn't exist yet (Railway first-deploy
+    # race), the current-holdings donut still renders; history shows empty state.
+    try:
+        hs_result = await db.execute(
+            select(HoldingSnapshot)
+            .where(HoldingSnapshot.user_id == user.id)
+            .order_by(HoldingSnapshot.snapshot_date)
+        )
+        hs_rows = [r for r in hs_result.scalars().all() if r is not None]
+    except Exception:
+        hs_rows = []
 
     # Group: {month: {asset_type: total_value}}
     hist_map: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))

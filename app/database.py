@@ -39,39 +39,25 @@ async def get_db():
 
 
 async def init_db():
+    # create_all in its OWN transaction so migration failures below can't roll it back.
+    # Bug: previously all DDL shared one transaction; a failing ALTER TABLE aborted the
+    # whole block → PostgreSQL rolled back create_all including holding_snapshots.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Widen snapshot_date to 16 chars to support hourly format YYYY-MM-DD HH
-        # Safe to run every startup — no-op if already wide enough or on SQLite
+
+    # Each migration in its OWN transaction — a failure is isolated and doesn't
+    # cascade to the others or to create_all above.
+    for ddl in [
+        # Widen snapshot_date to support hourly format YYYY-MM-DD HH
+        "ALTER TABLE portfolio_snapshots ALTER COLUMN snapshot_date TYPE VARCHAR(16)",
+        # Add ticker column (added after initial schema)
+        "ALTER TABLE holdings ADD COLUMN ticker VARCHAR(50)",
+    ]:
         try:
-            await conn.execute(
-                text("ALTER TABLE portfolio_snapshots ALTER COLUMN snapshot_date TYPE VARCHAR(16)")
-            )
+            async with engine.begin() as conn:
+                await conn.execute(text(ddl))
         except Exception:
-            pass  # SQLite (no-op) or already migrated
-        # Add ticker column to holdings if it doesn't exist
-        try:
-            await conn.execute(text("ALTER TABLE holdings ADD COLUMN ticker VARCHAR(50)"))
-        except Exception:
-            pass  # already exists
-        # Create holding_snapshots if not exists
-        # Safety net for Railway where create_all may silently skip new tables
-        try:
-            await conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS holding_snapshots (
-                    id            SERIAL PRIMARY KEY,
-                    user_id       INTEGER NOT NULL REFERENCES users(id),
-                    snapshot_date VARCHAR(10) NOT NULL,
-                    name          VARCHAR(100) NOT NULL,
-                    asset_type    VARCHAR(50) NOT NULL,
-                    quantity      FLOAT NOT NULL,
-                    avg_cost      FLOAT NOT NULL,
-                    current_price FLOAT NOT NULL,
-                    created_at    TIMESTAMP DEFAULT NOW()
-                )
-            """))
-        except Exception:
-            pass  # SQLite uses create_all; PostgreSQL: table already exists
+            pass  # already migrated (PostgreSQL) or no-op (SQLite)
 
 
 # ── Models ────────────────────────────────────────────────────────────────────

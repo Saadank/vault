@@ -161,10 +161,24 @@ async def _compute_values(db: AsyncSession, user_id: int):
 async def _take_snapshot(db: AsyncSession, user_id: int, overwrite: bool = True):
     """Record today's total portfolio value (YYYY-MM-DD key).
     overwrite=True (default): update existing entry (used after live price refresh).
-    overwrite=False: skip if entry already exists (used on page load to avoid stale spikes).
+    overwrite=False: skip if ANY snapshot for today exists — daily OR hourly.
+      Rationale: hourly snapshots use YYYY-MM-DD HH keys. If one exists for today,
+      the page-load must not create a YYYY-MM-DD daily entry with stale user-entered
+      prices — that entry sorts BEFORE the hourly ones alphabetically and creates a
+      visible spike → drop pattern in the chart.
     """
     portfolio_value, cash_balance = await _compute_values(db, user_id)
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
+
+    if not overwrite:
+        any_today = await db.execute(
+            select(PortfolioSnapshot).where(
+                PortfolioSnapshot.user_id == user_id,
+                PortfolioSnapshot.snapshot_date.like(today_str + "%"),
+            ).limit(1)
+        )
+        if any_today.scalar_one_or_none():
+            return  # hourly or daily snapshot already exists today — skip
 
     existing = await db.execute(
         select(PortfolioSnapshot).where(
@@ -175,8 +189,6 @@ async def _take_snapshot(db: AsyncSession, user_id: int, overwrite: bool = True)
     snap = existing.scalar_one_or_none()
 
     if snap:
-        if not overwrite:
-            return  # page-load snapshot — never clobber existing daily entry
         snap.portfolio_value = round(portfolio_value, 2)
         snap.cash_balance    = round(cash_balance, 2)
         snap.total_value     = round(portfolio_value + cash_balance, 2)

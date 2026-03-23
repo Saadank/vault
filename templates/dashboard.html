@@ -203,6 +203,13 @@
   .view-toggle-wrap { display:flex; align-items:center; gap:8px; padding:0 14px; }
   .toggle-lbl { font-family:var(--font-mono); font-size:9px; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); transition:color 0.2s; }
   .toggle-lbl.on { color:var(--accent); }
+
+  /* ── Sortable table headers ─────────────────────────────────────── */
+  .holdings-table th.sortable { cursor:pointer; user-select:none; white-space:nowrap; }
+  .holdings-table th.sortable:hover { color:var(--text2); }
+  .holdings-table th.sortable.sort-active { color:var(--accent); }
+  .sort-arrow { display:inline-block; margin-left:4px; font-size:9px; opacity:0.45; vertical-align:middle; }
+  .sort-active .sort-arrow { opacity:1; color:var(--accent); }
   .tog { position:relative; display:inline-block; width:34px; height:18px; flex-shrink:0; }
   .tog input { opacity:0; width:0; height:0; }
   .tog-track { position:absolute; inset:0; background:var(--surface3); border:1px solid var(--border2); border-radius:18px; cursor:pointer; transition:0.2s; }
@@ -1027,6 +1034,47 @@ function toggleViewMode() {
   renderHoldings();
 }
 
+// ── Holdings Sort ─────────────────────────────────────────────────────────────
+let sortKey = 'mv';   // default: market value
+let sortDir = -1;     // -1 = desc, 1 = asc
+
+function _sortVal(h, key) {
+  const mv  = h.quantity * h.current_price;
+  const cb  = h.quantity * h.avg_cost;
+  switch (key) {
+    case 'name':     return h.name.toLowerCase();
+    case 'qty':      return h.quantity;
+    case 'avg_cost': return h.avg_cost;
+    case 'cost':     return cb;
+    case 'price':    return h.current_price;
+    case 'mv':       return mv;
+    case 'pnl':      return mv - cb;
+    case 'pct':      return h.avg_cost > 0 ? (h.current_price - h.avg_cost) / h.avg_cost * 100 : 0;
+    default:         return 0;
+  }
+}
+
+function sortHoldings(key) {
+  if (sortKey === key) { sortDir *= -1; }
+  else { sortKey = key; sortDir = key === 'name' ? 1 : -1; }
+  renderHoldings();
+}
+
+function _sortedHoldings(arr) {
+  return [...arr].sort((a, b) => {
+    const va = _sortVal(a, sortKey), vb = _sortVal(b, sortKey);
+    if (typeof va === 'string') return va.localeCompare(vb) * sortDir;
+    return (va - vb) * sortDir;
+  });
+}
+
+function _thHTML(label, key) {
+  if (!key || !label) return `<th></th>`;
+  const active = sortKey === key;
+  const arrow  = active ? (sortDir === 1 ? '▲' : '▼') : '⇅';
+  return `<th class="sortable${active ? ' sort-active' : ''}" onclick="sortHoldings('${key}')">${label}<span class="sort-arrow">${arrow}</span></th>`;
+}
+
 function _syncToggleUI() {
   document.getElementById('mode-chk').checked = complexMode;
   document.getElementById('lbl-light').classList.toggle('on', !complexMode);
@@ -1088,10 +1136,21 @@ function renderHoldings() {
   const tFmt  = n => 'SAR ' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
   const tSub  = n => `<div style="font-size:10px;color:var(--muted);margin-top:1px;">USD ${Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>`;
 
+  const visible = _sortedHoldings(holdings.filter(h => h.quantity > 0));
+
   if (complexMode) {
     // ── Complex mode: full detail table ────────────────────────────
-    thead.innerHTML = `<tr><th>Asset</th><th>Qty</th><th>Avg Cost (SAR)</th><th>Total Cost (SAR)</th><th>Current Price (SAR)</th><th>Market Value (SAR)</th><th>P&L (SAR)</th><th></th></tr>`;
-    tbody.innerHTML = holdings.filter(h => h.quantity > 0).map(h => {
+    thead.innerHTML = `<tr>
+      ${_thHTML('Asset','name')}
+      ${_thHTML('Qty','qty')}
+      ${_thHTML('Avg Cost (SAR)','avg_cost')}
+      ${_thHTML('Total Cost (SAR)','cost')}
+      ${_thHTML('Current Price (SAR)','price')}
+      ${_thHTML('Market Value (SAR)','mv')}
+      ${_thHTML('P&amp;L (SAR)','pnl')}
+      ${_thHTML('','')}
+    </tr>`;
+    tbody.innerHTML = visible.map(h => {
       const mv  = h.quantity * h.current_price;
       const cb  = h.quantity * h.avg_cost;
       const pnl = mv - cb;
@@ -1122,8 +1181,14 @@ function renderHoldings() {
     }).join('');
   } else {
     // ── Light mode: minimal table — name, qty, avg cost, price, % ──
-    thead.innerHTML = `<tr><th>Asset</th><th>Qty</th><th>Avg Cost</th><th>Current Price</th><th>Change</th></tr>`;
-    tbody.innerHTML = holdings.filter(h => h.quantity > 0).map(h => {
+    thead.innerHTML = `<tr>
+      ${_thHTML('Asset','name')}
+      ${_thHTML('Qty','qty')}
+      ${_thHTML('Avg Cost','avg_cost')}
+      ${_thHTML('Current Price','price')}
+      ${_thHTML('Change','pct')}
+    </tr>`;
+    tbody.innerHTML = visible.map(h => {
       const pct     = h.avg_cost > 0 ? (h.current_price - h.avg_cost) / h.avg_cost * 100 : 0;
       const pc      = pct >= 0 ? 'pnl-pos' : 'pnl-neg';
       const pctSign = pct >= 0 ? '+' : '';

@@ -199,6 +199,17 @@
   .tab-content { display:none; }
   .tab-content.active { display:block; }
 
+  /* ── View Mode Toggle ──────────────────────────────────────────── */
+  .view-toggle-wrap { display:flex; align-items:center; gap:8px; padding:0 14px; }
+  .toggle-lbl { font-family:var(--font-mono); font-size:9px; letter-spacing:0.1em; text-transform:uppercase; color:var(--muted); transition:color 0.2s; }
+  .toggle-lbl.on { color:var(--accent); }
+  .tog { position:relative; display:inline-block; width:34px; height:18px; flex-shrink:0; }
+  .tog input { opacity:0; width:0; height:0; }
+  .tog-track { position:absolute; inset:0; background:var(--surface3); border:1px solid var(--border2); border-radius:18px; cursor:pointer; transition:0.2s; }
+  .tog-track:before { position:absolute; content:""; width:12px; height:12px; left:2px; top:2px; background:var(--muted); border-radius:50%; transition:0.2s; }
+  .tog input:checked ~ .tog-track { background:rgba(212,168,67,0.15); border-color:rgba(212,168,67,0.45); }
+  .tog input:checked ~ .tog-track:before { transform:translateX(16px); background:var(--accent); }
+
   /* ── Holdings Table ────────────────────────────────────────────── */
   .holdings-table { width:100%; border-collapse:collapse; }
   .holdings-table th {
@@ -673,21 +684,29 @@
     <!-- Left panel -->
     <div>
       <div class="panel">
-        <div class="tabs">
-          <button class="tab active" onclick="switchTab('holdings')">Holdings</button>
-          <button class="tab" onclick="switchTab('transactions')">Transactions</button>
+        <div class="tabs" style="justify-content:space-between;">
+          <div style="display:flex;">
+            <button class="tab active" onclick="switchTab('holdings')">Holdings</button>
+            <button class="tab" onclick="switchTab('transactions')">Transactions</button>
+          </div>
+          <div class="view-toggle-wrap" id="view-toggle-wrap">
+            <span class="toggle-lbl" id="lbl-light">Light</span>
+            <label class="tog">
+              <input type="checkbox" id="mode-chk" onchange="toggleViewMode()">
+              <span class="tog-track"></span>
+            </label>
+            <span class="toggle-lbl" id="lbl-complex">Complex</span>
+          </div>
         </div>
 
         <div id="tab-holdings" class="tab-content active">
           <div id="holdings-empty" class="empty-state">No holdings yet. Add your first investment →</div>
           <div id="holdings-wrap" style="display:none;overflow-x:auto;">
             <table class="holdings-table">
-              <thead>
-                <tr>
-                  <th>Asset</th><th>Qty</th><th>Avg Cost (SAR)</th><th>Total Cost (SAR)</th>
-                  <th>Current Price (SAR)</th><th>Market Value (SAR)</th><th>P&L (SAR)</th><th></th>
-                </tr>
-              </thead>
+              <thead id="holdings-thead"><tr>
+                <th>Asset</th><th>Qty</th><th>Avg Cost (SAR)</th><th>Total Cost (SAR)</th>
+                <th>Current Price (SAR)</th><th>Market Value (SAR)</th><th>P&L (SAR)</th><th></th>
+              </tr></thead>
               <tbody id="holdings-tbody"></tbody>
             </table>
           </div>
@@ -998,6 +1017,22 @@ const fmtS = n => (n >= 0 ? '+' : '-') + fmt(n);
 const fmtP = n => (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
 const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
+// ── View Mode (Light / Complex) ───────────────────────────────────────────────
+let complexMode = localStorage.getItem('vaultViewMode') === 'complex';
+
+function toggleViewMode() {
+  complexMode = document.getElementById('mode-chk').checked;
+  localStorage.setItem('vaultViewMode', complexMode ? 'complex' : 'light');
+  _syncToggleUI();
+  renderHoldings();
+}
+
+function _syncToggleUI() {
+  document.getElementById('mode-chk').checked = complexMode;
+  document.getElementById('lbl-light').classList.toggle('on', !complexMode);
+  document.getElementById('lbl-complex').classList.toggle('on', complexMode);
+}
+
 // ── Load ──────────────────────────────────────────────────────────────────────
 async function loadAll() {
   try {
@@ -1042,6 +1077,7 @@ function renderCash() {
 
 function renderHoldings() {
   const tbody = document.getElementById('holdings-tbody');
+  const thead = document.getElementById('holdings-thead');
   const empty = document.getElementById('holdings-empty');
   const wrap  = document.getElementById('holdings-wrap');
   renderAllocationChart(holdings);
@@ -1049,43 +1085,60 @@ function renderHoldings() {
   empty.style.display='none'; wrap.style.display='block';
 
   const usdRate = CURRENCY_RATES['USD'] || 3.75;
-
-  // Table-safe formatters — use ASCII "SAR" to avoid Arabic RTL glitches in cells
   const tFmt  = n => 'SAR ' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
   const tSub  = n => `<div style="font-size:10px;color:var(--muted);margin-top:1px;">USD ${Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>`;
 
-  tbody.innerHTML = holdings.filter(h => h.quantity > 0).map(h => {
-    const mv  = h.quantity * h.current_price;
-    const cb  = h.quantity * h.avg_cost;
-    const pnl = mv - cb;
-    const pct = cb > 0 ? pnl/cb*100 : 0;
-    const pc  = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
-
-    const usdRate2 = usdRate;
-    const pnlSign  = pnl >= 0 ? '+' : '-';
-    const pctSign  = pct >= 0 ? '+' : '';
-
-    return `<tr>
-      <td>
-        <div class="asset-name">${esc(h.name)}<span class="asset-type-badge">${esc(h.asset_type)}</span></div>
-        <div class="notes-display${h.notes ? '' : ' empty'}" id="notes-${h.id}" onclick="startEditNotes(${h.id})">${h.notes ? esc(h.notes) : ''}</div>
-      </td>
-      <td>${h.quantity.toLocaleString('en-US',{maximumFractionDigits:6})}</td>
-      <td>${tFmt(h.avg_cost)}${tSub(h.avg_cost / usdRate2)}</td>
-      <td>${tFmt(cb)}${tSub(cb / usdRate2)}</td>
-      <td>
-        ${tFmt(h.current_price)}${tSub(h.current_price / usdRate2)}
-        <button class="update-price-btn" onclick="openPriceModal(${h.id},'${esc(h.name)}',${h.current_price},${h.avg_cost})">update</button>
-      </td>
-      <td>${tFmt(mv)}${tSub(mv / usdRate2)}</td>
-      <td class="${pc}">
-        <div style="font-weight:600;white-space:nowrap;">${pnlSign}${tFmt(pnl)}</div>
-        <div style="font-size:10px;color:var(--muted);margin-top:1px;">${pnlSign}USD ${Math.abs(pnl/usdRate2).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
-        <div style="font-size:11px;margin-top:1px;">${pctSign}${pct.toFixed(2)}%</div>
-      </td>
-      <td><div class="row-actions"><button class="action-btn" onclick="openBuyMoreModal(${h.id},'${esc(h.name)}','${esc(h.ticker||'')}','${esc(h.asset_type)}',${h.current_price})">Buy</button><button class="action-btn" onclick="openSellModal(${h.id},'${esc(h.name)}',${h.avg_cost},${h.quantity},${h.current_price})">Sell</button></div></td>
-    </tr>`;
-  }).join('');
+  if (complexMode) {
+    // ── Complex mode: full detail table ────────────────────────────
+    thead.innerHTML = `<tr><th>Asset</th><th>Qty</th><th>Avg Cost (SAR)</th><th>Total Cost (SAR)</th><th>Current Price (SAR)</th><th>Market Value (SAR)</th><th>P&L (SAR)</th><th></th></tr>`;
+    tbody.innerHTML = holdings.filter(h => h.quantity > 0).map(h => {
+      const mv  = h.quantity * h.current_price;
+      const cb  = h.quantity * h.avg_cost;
+      const pnl = mv - cb;
+      const pct = cb > 0 ? pnl/cb*100 : 0;
+      const pc  = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+      const pnlSign = pnl >= 0 ? '+' : '-';
+      const pctSign = pct >= 0 ? '+' : '';
+      return `<tr>
+        <td>
+          <div class="asset-name">${esc(h.name)}<span class="asset-type-badge">${esc(h.asset_type)}</span></div>
+          <div class="notes-display${h.notes ? '' : ' empty'}" id="notes-${h.id}" onclick="startEditNotes(${h.id})">${h.notes ? esc(h.notes) : ''}</div>
+        </td>
+        <td>${h.quantity.toLocaleString('en-US',{maximumFractionDigits:6})}</td>
+        <td>${tFmt(h.avg_cost)}${tSub(h.avg_cost / usdRate)}</td>
+        <td>${tFmt(cb)}${tSub(cb / usdRate)}</td>
+        <td>
+          ${tFmt(h.current_price)}${tSub(h.current_price / usdRate)}
+          <button class="update-price-btn" onclick="openPriceModal(${h.id},'${esc(h.name)}',${h.current_price},${h.avg_cost})">update</button>
+        </td>
+        <td>${tFmt(mv)}${tSub(mv / usdRate)}</td>
+        <td class="${pc}">
+          <div style="font-weight:600;white-space:nowrap;">${pnlSign}${tFmt(pnl)}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:1px;">${pnlSign}USD ${Math.abs(pnl/usdRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+          <div style="font-size:11px;margin-top:1px;">${pctSign}${pct.toFixed(2)}%</div>
+        </td>
+        <td><div class="row-actions"><button class="action-btn" onclick="openBuyMoreModal(${h.id},'${esc(h.name)}','${esc(h.ticker||'')}','${esc(h.asset_type)}',${h.current_price})">Buy</button><button class="action-btn" onclick="openSellModal(${h.id},'${esc(h.name)}',${h.avg_cost},${h.quantity},${h.current_price})">Sell</button></div></td>
+      </tr>`;
+    }).join('');
+  } else {
+    // ── Light mode: minimal table — name, qty, avg cost, price, % ──
+    thead.innerHTML = `<tr><th>Asset</th><th>Qty</th><th>Avg Cost</th><th>Current Price</th><th>Change</th></tr>`;
+    tbody.innerHTML = holdings.filter(h => h.quantity > 0).map(h => {
+      const pct     = h.avg_cost > 0 ? (h.current_price - h.avg_cost) / h.avg_cost * 100 : 0;
+      const pc      = pct >= 0 ? 'pnl-pos' : 'pnl-neg';
+      const pctSign = pct >= 0 ? '+' : '';
+      return `<tr>
+        <td><div class="asset-name">${esc(h.name)}<span class="asset-type-badge">${esc(h.asset_type)}</span></div></td>
+        <td>${h.quantity.toLocaleString('en-US',{maximumFractionDigits:6})}</td>
+        <td>${tFmt(h.avg_cost)}</td>
+        <td>
+          ${tFmt(h.current_price)}
+          <button class="update-price-btn" onclick="openPriceModal(${h.id},'${esc(h.name)}',${h.current_price},${h.avg_cost})">update</button>
+        </td>
+        <td class="${pc}" style="font-weight:700;font-size:13px;letter-spacing:0.02em;">${pctSign}${pct.toFixed(2)}%</td>
+      </tr>`;
+    }).join('');
+  }
 }
 
 function renderTransactions(txs) {
@@ -1312,6 +1365,7 @@ async function addInvestment() {
     document.getElementById('conversion-preview').textContent = '';
     document.getElementById('reconvert-bar').classList.remove('show');
     clearTickerValidation();
+    await api('POST', '/api/prices/refresh').catch(() => {});
     await loadAll();
   } catch(e) {
     notify(e.message, true);
@@ -1380,6 +1434,7 @@ async function executeBuyMore() {
     closeModal('buy-more-modal');
     const note = cur !== 'SAR' ? ` (${cur} → SAR @ ${CURRENCY_RATES[cur]})` : '';
     notify(`Bought ${qty} × ${buyMoreHolding.name} @ ${fmt(sarPrice)}${note}`);
+    await api('POST', '/api/prices/refresh').catch(() => {});
     await loadAll();
   } catch(e) { notify(e.message, true); }
 }
@@ -1564,6 +1619,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
   document.querySelector(`.tab[onclick="switchTab('${name}')"]`).classList.add('active');
   document.getElementById('tab-' + name).classList.add('active');
+  document.getElementById('view-toggle-wrap').style.display = name === 'holdings' ? 'flex' : 'none';
   if (name === 'transactions') loadAll();
 }
 
@@ -2085,6 +2141,7 @@ let autoRefreshTimer = setInterval(() => {
 }, 3600000);
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+_syncToggleUI();
 document.getElementById('f-date').value = today();
 document.getElementById('sell-date').value = today();
 loadAll();

@@ -380,6 +380,7 @@ async def chart_data(
     points = [
         {"date": s.snapshot_date, "value": s.total_value, "holdings": s.portfolio_value}
         for s in snapshots
+        if " " in s.snapshot_date  # hourly snapshots only (YYYY-MM-DD HH)
     ]
 
     # Fallback: return single current point so chart isn't empty

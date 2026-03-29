@@ -2021,13 +2021,19 @@ function renderChart(points) {
   const lineColor  = isPositive ? '#d4a843' : '#f06a6a';
   const fillColor  = isPositive ? 'rgba(212,168,67,0.07)' : 'rgba(240,106,106,0.07)';
 
-  // Zoom y-axis into the actual data range so small changes are clearly visible
+  // Zoom y-axis into the actual data range so small changes are clearly visible.
+  // Use the inner 80% of the data (p10–p90) to compute padding so that single
+  // outliers (e.g. a large cash deposit) don't collapse the visible variation.
   const minVal = Math.min(...values);
   const maxVal = Math.max(...values);
-  const range  = maxVal - minVal;
-  const yPad   = range > 0 ? range * 0.25 : maxVal * 0.05;
-  const yMin   = Math.max(0, minVal - yPad);
-  const yMax   = maxVal + yPad * 0.3;
+  const sorted = [...values].sort((a, b) => a - b);
+  const n = sorted.length;
+  const p10 = sorted[Math.max(0, Math.floor(n * 0.10))];
+  const p90 = sorted[Math.min(n - 1, Math.floor(n * 0.90))];
+  const innerRange = Math.max(p90 - p10, maxVal * 0.002); // floor at 0.2% of portfolio
+  const yPad = innerRange * 0.4;
+  const yMin = Math.max(0, minVal - yPad * 0.5);
+  const yMax = maxVal + yPad * 0.3;
 
   // Gradient: very subtle fill so the line is the focus
   const chartH = ctx.canvas.offsetHeight || 250;

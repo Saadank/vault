@@ -361,6 +361,8 @@ async def chart_data(
         cutoff_str = (now - timedelta(weeks=1)).strftime("%Y-%m-%d")
     elif range == "1M":
         cutoff_str = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+    elif range == "3M":
+        cutoff_str = (now - timedelta(days=90)).strftime("%Y-%m-%d")
     elif range == "YTD":
         cutoff_str = datetime(now.year, 1, 1).strftime("%Y-%m-%d")
     elif range == "1Y":

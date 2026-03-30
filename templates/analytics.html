@@ -263,17 +263,48 @@
   <!-- Section 1: Performance -->
   <div class="section">
     <div class="section-title">Performance</div>
-    <div class="range-row" id="perf-ranges">
-      <button class="range-btn" onclick="setPerfRange('1M')">1M</button>
-      <button class="range-btn" onclick="setPerfRange('3M')">3M</button>
-      <button class="range-btn active" onclick="setPerfRange('YTD')">YTD</button>
-      <button class="range-btn" onclick="setPerfRange('1Y')">1Y</button>
-      <button class="range-btn" onclick="setPerfRange('Max')">Max</button>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+      <div class="range-row" id="perf-ranges" style="margin-bottom:0">
+        <button class="range-btn" onclick="setPerfRange('1D')">1D</button>
+        <button class="range-btn" onclick="setPerfRange('1W')">1W</button>
+        <button class="range-btn" onclick="setPerfRange('1M')">1M</button>
+        <button class="range-btn" onclick="setPerfRange('3M')">3M</button>
+        <button class="range-btn active" onclick="setPerfRange('YTD')">YTD</button>
+        <button class="range-btn" onclick="setPerfRange('1Y')">1Y</button>
+        <button class="range-btn" onclick="setPerfRange('Max')">Max</button>
+      </div>
+      <div style="display:flex;gap:2px;">
+        <button class="range-btn active" id="mode-sar" onclick="setPerfMode('sar')">SAR</button>
+        <button class="range-btn" id="mode-pct" onclick="setPerfMode('pct')">%</button>
+      </div>
     </div>
     <div class="chart-wrap" style="height:260px">
       <canvas id="perf-chart"></canvas>
     </div>
     <div class="perf-stats" id="perf-stats-row"></div>
+  </div>
+
+  <!-- Section 1b: Holdings Chart -->
+  <div class="section">
+    <div class="section-title">Holdings Value</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+      <div class="range-row" id="holdings-ranges" style="margin-bottom:0">
+        <button class="range-btn" onclick="setHoldingsRange('1D')">1D</button>
+        <button class="range-btn" onclick="setHoldingsRange('1W')">1W</button>
+        <button class="range-btn" onclick="setHoldingsRange('1M')">1M</button>
+        <button class="range-btn" onclick="setHoldingsRange('3M')">3M</button>
+        <button class="range-btn active" onclick="setHoldingsRange('YTD')">YTD</button>
+        <button class="range-btn" onclick="setHoldingsRange('1Y')">1Y</button>
+        <button class="range-btn" onclick="setHoldingsRange('Max')">Max</button>
+      </div>
+      <div style="display:flex;gap:2px;">
+        <button class="range-btn active" id="hmode-sar" onclick="setHoldingsMode('sar')">SAR</button>
+        <button class="range-btn" id="hmode-pct" onclick="setHoldingsMode('pct')">%</button>
+      </div>
+    </div>
+    <div class="chart-wrap" style="height:260px">
+      <canvas id="holdings-chart"></canvas>
+    </div>
   </div>
 
   <!-- Section 2: Allocation -->
@@ -412,6 +443,7 @@ let scoreSortAsc = false;
 
 // ── Performance chart ─────────────────────────────────────────────────────────
 let activePerfRange = 'YTD';
+let activePerfMode  = 'sar';   // 'sar' | 'pct'
 let lastPerfData = null;
 
 function setPerfRange(r) {
@@ -420,6 +452,13 @@ function setPerfRange(r) {
     b.classList.toggle('active', b.textContent === r);
   });
   loadPerf();
+}
+
+function setPerfMode(mode) {
+  activePerfMode = mode;
+  document.getElementById('mode-sar').classList.toggle('active', mode === 'sar');
+  document.getElementById('mode-pct').classList.toggle('active', mode === 'pct');
+  if (lastPerfData) renderPerfChart(lastPerfData);
 }
 
 async function loadPerf() {
@@ -432,10 +471,18 @@ async function loadPerf() {
 }
 
 function renderPerfChart(points) {
-  const labels = points.map(p => p.date);
-  const values = points.map(p => p.value);
-  const first = values[0] || 0;
-  const last  = values[values.length - 1] || 0;
+  const labels   = points.map(p => p.date);
+  const rawVals  = points.map(p => p.value);
+  const isPct    = activePerfMode === 'pct';
+  const baseline = rawVals[0] || 1;
+
+  // In % mode: normalize each point to % change from period start
+  const values = isPct
+    ? rawVals.map(v => parseFloat(((v - baseline) / baseline * 100).toFixed(4)))
+    : rawVals;
+
+  const first = values[0] ?? 0;
+  const last  = values[values.length - 1] ?? 0;
   const isPos = last >= first;
   const lineColor = isPos ? '#d4a843' : '#f06a6a';
 
@@ -443,6 +490,23 @@ function renderPerfChart(points) {
   const grad = ctx.createLinearGradient(0, 0, 0, 260);
   grad.addColorStop(0, isPos ? 'rgba(212,168,67,0.18)' : 'rgba(240,106,106,0.18)');
   grad.addColorStop(1, 'rgba(0,0,0,0)');
+
+  // In % mode: draw a dashed zero-line so the baseline is clear
+  const zeroLinePlugin = {
+    id: 'zeroLine',
+    afterDraw(chart) {
+      if (!isPct) return;
+      const {ctx: c, chartArea: {left, right}, scales: {y}} = chart;
+      const yZero = y.getPixelForValue(0);
+      if (yZero < chart.chartArea.top || yZero > chart.chartArea.bottom) return;
+      c.save();
+      c.setLineDash([4, 4]);
+      c.strokeStyle = 'rgba(255,255,255,0.12)';
+      c.lineWidth = 1;
+      c.beginPath(); c.moveTo(left, yZero); c.lineTo(right, yZero); c.stroke();
+      c.restore();
+    }
+  };
 
   if (perfChart) { perfChart.destroy(); perfChart = null; }
   perfChart = new Chart(ctx, {
@@ -458,7 +522,7 @@ function renderPerfChart(points) {
         pointRadius: 0,
         pointHoverRadius: 4,
         pointHoverBackgroundColor: lineColor,
-        fill: true,
+        fill: isPct ? 'origin' : true,
       }]
     },
     options: {
@@ -473,11 +537,13 @@ function renderPerfChart(points) {
           position: 'right',
           ticks: {
             font: { family: 'JetBrains Mono', size: 10 }, color: '#4a6080',
-            callback: v => 'SAR ' + v.toLocaleString('en-US', {maximumFractionDigits:0}),
+            callback: v => isPct
+              ? (v >= 0 ? '+' : '') + v.toFixed(2) + '%'
+              : 'SAR ' + v.toLocaleString('en-US', {maximumFractionDigits:0}),
           },
           grid: { color: 'rgba(28,40,64,0.6)' },
-          min: values.length ? Math.min(...values) * 0.98 : undefined,
-          max: values.length ? Math.max(...values) * 1.02 : undefined,
+          min: values.length ? (isPct ? Math.min(...values) * 1.3 : Math.min(...values) * 0.98) : undefined,
+          max: values.length ? (isPct ? Math.max(...values) * 1.3 : Math.max(...values) * 1.02) : undefined,
         }
       },
       plugins: {
@@ -487,11 +553,136 @@ function renderPerfChart(points) {
           titleFont: { family: 'JetBrains Mono', size: 11 },
           bodyFont: { family: 'JetBrains Mono', size: 12 },
           callbacks: {
-            label: ctx => ' SAR ' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}),
+            label: ctx => isPct
+              ? ' ' + (ctx.parsed.y >= 0 ? '+' : '') + ctx.parsed.y.toFixed(2) + '%'
+              : ' SAR ' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}),
           }
         }
       }
+    },
+    plugins: [zeroLinePlugin],
+  });
+}
+
+// ── Holdings chart ────────────────────────────────────────────────────────────
+let holdingsChart       = null;
+let activeHoldingsRange = 'YTD';
+let activeHoldingsMode  = 'sar';   // 'sar' | 'pct'
+let lastHoldingsPoints  = [];
+
+function setHoldingsRange(r) {
+  activeHoldingsRange = r;
+  document.querySelectorAll('#holdings-ranges .range-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent === r);
+  });
+  loadHoldingsChart();
+}
+
+function setHoldingsMode(mode) {
+  activeHoldingsMode = mode;
+  document.getElementById('hmode-sar').classList.toggle('active', mode === 'sar');
+  document.getElementById('hmode-pct').classList.toggle('active', mode === 'pct');
+  if (lastHoldingsPoints.length) renderHoldingsChart(lastHoldingsPoints);
+}
+
+async function loadHoldingsChart() {
+  try {
+    const data = await api('GET', `/api/prices/chart?range=${activeHoldingsRange}`);
+    if (!data || !data.points) return;
+    lastHoldingsPoints = data.points;
+    renderHoldingsChart(data.points);
+  } catch(e) { console.error('holdings chart:', e); }
+}
+
+function renderHoldingsChart(points) {
+  const isPct    = activeHoldingsMode === 'pct';
+  const labels   = points.map(p => p.date);
+  const rawVals  = points.map(p => p.holdings ?? p.value);
+  const baseline = rawVals[0] || 1;
+
+  const values = isPct
+    ? rawVals.map(v => parseFloat(((v - baseline) / baseline * 100).toFixed(4)))
+    : rawVals;
+
+  const first = values[0] ?? 0;
+  const last  = values[values.length - 1] ?? 0;
+  const isPos = last >= first;
+  const lineColor = isPos ? '#d4a843' : '#f06a6a';
+
+  const ctx = document.getElementById('holdings-chart').getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 260);
+  grad.addColorStop(0, isPos ? 'rgba(212,168,67,0.18)' : 'rgba(240,106,106,0.18)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+
+  const zeroLinePlugin = {
+    id: 'zeroLineH',
+    afterDraw(chart) {
+      if (!isPct) return;
+      const {ctx: c, chartArea: {left, right}, scales: {y}} = chart;
+      const yZero = y.getPixelForValue(0);
+      if (yZero < chart.chartArea.top || yZero > chart.chartArea.bottom) return;
+      c.save();
+      c.setLineDash([4, 4]);
+      c.strokeStyle = 'rgba(255,255,255,0.12)';
+      c.lineWidth = 1;
+      c.beginPath(); c.moveTo(left, yZero); c.lineTo(right, yZero); c.stroke();
+      c.restore();
     }
+  };
+
+  if (holdingsChart) { holdingsChart.destroy(); holdingsChart = null; }
+  holdingsChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        borderColor: lineColor,
+        backgroundColor: grad,
+        borderWidth: 1.5,
+        tension: 0.4,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        pointHoverBackgroundColor: lineColor,
+        fill: isPct ? 'origin' : true,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: {
+          ticks: { maxTicksLimit: 8, font: { family: 'JetBrains Mono', size: 10 }, color: '#4a6080' },
+          grid: { color: 'rgba(28,40,64,0.6)' },
+        },
+        y: {
+          position: 'right',
+          ticks: {
+            font: { family: 'JetBrains Mono', size: 10 }, color: '#4a6080',
+            callback: v => isPct
+              ? (v >= 0 ? '+' : '') + v.toFixed(2) + '%'
+              : 'SAR ' + v.toLocaleString('en-US', {maximumFractionDigits:0}),
+          },
+          grid: { color: 'rgba(28,40,64,0.6)' },
+          min: values.length ? (isPct ? Math.min(...values) * 1.3 : Math.min(...values) * 0.98) : undefined,
+          max: values.length ? (isPct ? Math.max(...values) * 1.3 : Math.max(...values) * 1.02) : undefined,
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#111822', borderColor: '#283a56', borderWidth: 1,
+          titleFont: { family: 'JetBrains Mono', size: 11 },
+          bodyFont: { family: 'JetBrains Mono', size: 12 },
+          callbacks: {
+            label: ctx => isPct
+              ? ' ' + (ctx.parsed.y >= 0 ? '+' : '') + ctx.parsed.y.toFixed(2) + '%'
+              : ' SAR ' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}),
+          }
+        }
+      }
+    },
+    plugins: [zeroLinePlugin],
   });
 }
 
@@ -877,6 +1068,7 @@ document.querySelector('form[action="/api/auth/logout"]')?.addEventListener('sub
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadAll();
 loadPerf();
+loadHoldingsChart();
 </script>
 </body>
 </html>

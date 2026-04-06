@@ -64,7 +64,7 @@ async def _daily_report_loop():
 
     while True:
         now    = datetime.now(tz)
-        target = now.replace(hour=11, minute=55, second=0, microsecond=0)
+        target = now.replace(hour=23, minute=55, second=0, microsecond=0)
         if now >= target:
             target += timedelta(days=1)
 

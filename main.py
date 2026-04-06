@@ -12,6 +12,8 @@ Or in production:
 import asyncio
 import logging
 import os
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 load_dotenv()  # loads .env locally; no-op on Railway where env vars are set directly
 from contextlib import asynccontextmanager
@@ -54,16 +56,54 @@ async def _hourly_snapshot_loop():
             logger.error(f"Hourly snapshot loop error: {e}")
 
 
+async def _daily_report_loop():
+    """Background task: send portfolio report at 11:55 on Sun–Fri (Asia/Riyadh by default)."""
+    from app.report_service import send_daily_report
+
+    tz = ZoneInfo(os.getenv("REPORT_TZ", "Asia/Riyadh"))
+
+    while True:
+        now    = datetime.now(tz)
+        target = now.replace(hour=11, minute=55, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+
+        # Skip Saturday (Python weekday: Mon=0 … Sat=5, Sun=6)
+        while target.weekday() == 5:
+            target += timedelta(days=1)
+
+        sleep_secs = (target - now).total_seconds()
+        logger.info(f"Next daily report scheduled at {target.strftime('%Y-%m-%d %H:%M %Z')}")
+        await asyncio.sleep(sleep_secs)
+
+        try:
+            async with SessionLocal() as db:
+                result = await db.execute(select(User))
+                users = result.scalars().all()
+            for user in users:
+                try:
+                    await send_daily_report(user.id)
+                except Exception as e:
+                    logger.warning(f"Daily report failed for user {user.id}: {e}")
+        except Exception as e:
+            logger.error(f"Daily report loop error: {e}")
+
+        await asyncio.sleep(70)  # guard against double-trigger within same minute
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()          # create tables on startup
-    task = asyncio.create_task(_hourly_snapshot_loop())
+    task1 = asyncio.create_task(_hourly_snapshot_loop())
+    task2 = asyncio.create_task(_daily_report_loop())
     yield
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    task1.cancel()
+    task2.cancel()
+    for t in (task1, task2):
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(

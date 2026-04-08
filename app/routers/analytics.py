@@ -475,3 +475,15 @@ async def analytics_scoreboard(
 
     rows.sort(key=lambda x: x["total_pnl"], reverse=True)
     return rows
+
+
+# ── 7. Send report on demand ──────────────────────────────────────────────────
+@router.post("/report/send")
+async def send_report_now(user: User = Depends(get_current_user)):
+    """Immediately generate and email the portfolio report to the logged-in user."""
+    from app.report_service import send_daily_report
+    if not user.email:
+        from fastapi import HTTPException
+        raise HTTPException(400, "No email address on your account.")
+    await send_daily_report(user.id)
+    return {"status": "sent", "email": user.email}

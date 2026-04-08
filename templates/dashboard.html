@@ -624,6 +624,7 @@
         <strong>{{ user.username }}</strong>
       </div>
       <a href="/analytics" class="ai-btn" style="text-decoration:none" title="Analytics Dashboard">📊 Analytics</a>
+      <button class="ai-btn" id="report-btn" onclick="sendReport()" title="Email portfolio report now">✉ Report</button>
       <button class="ai-btn" onclick="openChatPanel()" title="AI Portfolio Advisor">✦ AI Advisor</button>
       <button class="logout-btn" onclick="logout()">Logout</button>
     </div>
@@ -1665,6 +1666,27 @@ async function logout() {
   await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
   localStorage.removeItem('vault_token');
   window.location.href = '/login';
+}
+
+async function sendReport() {
+  const btn = document.getElementById('report-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Sending…';
+  try {
+    const res = await fetch('/api/analytics/report/send', { method: 'POST', credentials: 'include' });
+    const data = await res.json();
+    if (res.ok) {
+      btn.textContent = '✓ Sent!';
+      setTimeout(() => { btn.textContent = '✉ Report'; btn.disabled = false; }, 3000);
+    } else {
+      btn.textContent = '✗ Failed';
+      alert(data.detail || 'Failed to send report.');
+      setTimeout(() => { btn.textContent = '✉ Report'; btn.disabled = false; }, 3000);
+    }
+  } catch (e) {
+    btn.textContent = '✗ Error';
+    setTimeout(() => { btn.textContent = '✉ Report'; btn.disabled = false; }, 3000);
+  }
 }
 
 // ── Modal Helpers ─────────────────────────────────────────────────────────────

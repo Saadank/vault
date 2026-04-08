@@ -2,24 +2,21 @@
 Daily portfolio report — PDF generation + email delivery.
 
 Required environment variables:
-  SMTP_HOST   — SMTP server hostname  (default: smtp.gmail.com)
-  SMTP_PORT   — SMTP port             (default: 587)
-  SMTP_USER   — login / sender email
-  SMTP_PASS   — password or app-password
-  REPORT_TZ   — IANA timezone string  (default: Asia/Riyadh)
+  RESEND_API_KEY — Resend API key
+  REPORT_FROM    — sender address (default: reports@yourdomain.com)
+  REPORT_TZ      — IANA timezone string  (default: Asia/Riyadh)
 """
 
 import asyncio
+import base64
 import io
 import logging
 import os
-import smtplib
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from email.mime.application import MIMEApplication
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
+
+import resend
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -603,37 +600,32 @@ def _build_pdf(data: dict) -> bytes:
 # ── Email ─────────────────────────────────────────────────────────────────────
 def _send_email_sync(to_email: str, subject: str, html_body: str,
                      pdf_bytes: bytes, filename: str) -> None:
-    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user = os.getenv("SMTP_USER", "")
-    smtp_pass = os.getenv("SMTP_PASS", "")
-
-    if not smtp_user or not smtp_pass:
-        logger.warning("SMTP_USER / SMTP_PASS not configured — skipping email send")
+    api_key = os.getenv("RESEND_API_KEY", "")
+    if not api_key:
+        logger.warning("RESEND_API_KEY not configured — skipping email send")
         return
 
-    msg = MIMEMultipart("mixed")
-    msg["Subject"] = subject
-    msg["From"]    = smtp_user
-    msg["To"]      = to_email
+    resend.api_key = api_key
+    from_addr = os.getenv("REPORT_FROM", "VAULT Reports <reports@vault.app>")
 
-    msg.attach(MIMEText(html_body, "html"))
-
-    pdf_part = MIMEApplication(pdf_bytes, _subtype="pdf")
-    pdf_part.add_header("Content-Disposition", "attachment", filename=filename)
-    msg.attach(pdf_part)
-
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
-        server.starttls()
-        server.login(smtp_user, smtp_pass)
-        server.send_message(msg)
+    resend.Emails.send({
+        "from": from_addr,
+        "to": [to_email],
+        "subject": subject,
+        "html": html_body,
+        "attachments": [
+            {
+                "filename": filename,
+                "content": list(pdf_bytes),
+            }
+        ],
+    })
 
     logger.info(f"Portfolio report sent to {to_email}")
 
 
 async def _send_email_async(to_email: str, subject: str, html_body: str,
                              pdf_bytes: bytes, filename: str) -> None:
-    """Run blocking SMTP send in a thread so the event loop isn't stalled."""
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None, _send_email_sync, to_email, subject, html_body, pdf_bytes, filename

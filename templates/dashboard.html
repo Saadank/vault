@@ -232,7 +232,7 @@
     background: var(--surface2);
     white-space: nowrap;
   }
-  .holdings-table th:last-child, .holdings-table td:last-child { text-align:right; }
+  .holdings-table th:last-child, .holdings-table td:last-child { text-align:right; min-width:170px; }
   .holdings-table td {
     padding: 14px 16px;
     font-family: var(--font-mono);
@@ -258,18 +258,19 @@
   }
   .pnl-pos { color:var(--green); }
   .pnl-neg { color:var(--red); }
-  .row-actions { display:flex; gap:6px; justify-content:flex-end; }
+  .row-actions { display:flex; gap:4px; justify-content:flex-end; flex-wrap:wrap; }
   .action-btn {
-    padding: 5px 12px;
+    padding: 5px 10px;
     font-family: var(--font-mono);
     font-size: 9px;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     cursor: pointer;
     border: 1px solid var(--border2);
     background: transparent;
     color: var(--muted);
     transition: all 0.15s;
+    white-space: nowrap;
   }
   .action-btn:hover { border-color:var(--red); color:var(--red); background:var(--red-dim); }
   .action-btn.capital-btn { border-color:rgba(212,168,67,0.35); color:var(--accent); }

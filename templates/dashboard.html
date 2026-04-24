@@ -232,7 +232,7 @@
     background: var(--surface2);
     white-space: nowrap;
   }
-  .holdings-table th:last-child, .holdings-table td:last-child { text-align:right; min-width:170px; }
+  .holdings-table th:last-child, .holdings-table td:last-child { text-align:right; min-width:120px; }
   .holdings-table td {
     padding: 14px 16px;
     font-family: var(--font-mono);
@@ -1219,7 +1219,7 @@ function renderHoldings() {
           <div style="font-size:10px;color:var(--muted);margin-top:1px;">${pnlSign}USD ${Math.abs(pnl/usdRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
           <div style="font-size:11px;margin-top:1px;">${pctSign}${pct.toFixed(2)}%</div>
         </td>
-        <td><div class="row-actions"><button class="action-btn" onclick="openBuyMoreModal(${h.id},'${esc(h.name)}','${esc(h.ticker||'')}','${esc(h.asset_type)}',${h.current_price})">Buy</button><button class="action-btn" onclick="openSellModal(${h.id},'${esc(h.name)}',${h.avg_cost},${h.quantity},${h.current_price})">Sell</button><button class="action-btn capital-btn" onclick="openCapIncModal(${h.id},'${esc(h.name)}',${h.quantity},${h.avg_cost},${h.current_price})">Cap+</button></div></td>
+        <td><div class="row-actions"><button class="action-btn" onclick="openBuyMoreModal(${h.id},'${esc(h.name)}','${esc(h.ticker||'')}','${esc(h.asset_type)}',${h.current_price})">Buy</button><button class="action-btn" onclick="openSellModal(${h.id},'${esc(h.name)}',${h.avg_cost},${h.quantity},${h.current_price})">Sell</button></div><div style="margin-top:4px;display:flex;justify-content:flex-end;"><button class="action-btn capital-btn" onclick="openCapIncModal(${h.id},'${esc(h.name)}',${h.quantity},${h.avg_cost},${h.current_price})">Cap+</button></div></td>
       </tr>`;
     }).join('');
   } else {

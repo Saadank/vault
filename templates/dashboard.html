@@ -272,6 +272,8 @@
     transition: all 0.15s;
   }
   .action-btn:hover { border-color:var(--red); color:var(--red); background:var(--red-dim); }
+  .action-btn.capital-btn { border-color:rgba(212,168,67,0.35); color:var(--accent); }
+  .action-btn.capital-btn:hover { border-color:var(--accent); background:var(--accent-dim); color:var(--accent); }
   .update-price-btn {
     background: none;
     border: none;
@@ -865,6 +867,45 @@
   </div>
 </div>
 
+<!-- Capital Increase Modal -->
+<div class="modal-overlay" id="cap-inc-modal">
+  <div class="modal">
+    <div class="modal-title">
+      زيادة رأس المال — <span id="cap-inc-name"></span>
+      <button class="modal-close" onclick="closeModal('cap-inc-modal')">×</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Current Holdings</label>
+      <div style="font-family:var(--font-mono);font-size:12px;color:var(--text2);padding:8px 0;">
+        <span id="cap-inc-cur-qty"></span> units @ <span id="cap-inc-cur-avg"></span> SAR avg cost
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">New Bonus Shares Received</label>
+      <input type="number" id="cap-inc-shares" placeholder="0" step="any" min="0.000001" oninput="updateCapIncPreview()">
+    </div>
+    <div class="form-group">
+      <label class="form-label">New Price After Adjustment (optional)</label>
+      <input type="number" id="cap-inc-price" placeholder="Leave blank to keep current" step="any" min="0" oninput="updateCapIncPreview()">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Date</label>
+      <input type="date" id="cap-inc-date">
+    </div>
+    <div class="profit-preview" id="cap-inc-preview" style="display:none;flex-direction:column;gap:4px;">
+      <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:12px;">
+        <span style="color:var(--muted);">New Qty</span>
+        <span id="cap-inc-new-qty" style="color:var(--accent);font-weight:600;"></span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:12px;">
+        <span style="color:var(--muted);">New Avg Cost</span>
+        <span id="cap-inc-new-avg" style="color:var(--accent2);font-weight:600;"></span>
+      </div>
+    </div>
+    <button class="btn" onclick="executeCapInc()">Apply Capital Increase</button>
+  </div>
+</div>
+
 <!-- Buy More Modal -->
 <div class="modal-overlay" id="buy-more-modal">
   <div class="modal">
@@ -1177,7 +1218,7 @@ function renderHoldings() {
           <div style="font-size:10px;color:var(--muted);margin-top:1px;">${pnlSign}USD ${Math.abs(pnl/usdRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
           <div style="font-size:11px;margin-top:1px;">${pctSign}${pct.toFixed(2)}%</div>
         </td>
-        <td><div class="row-actions"><button class="action-btn" onclick="openBuyMoreModal(${h.id},'${esc(h.name)}','${esc(h.ticker||'')}','${esc(h.asset_type)}',${h.current_price})">Buy</button><button class="action-btn" onclick="openSellModal(${h.id},'${esc(h.name)}',${h.avg_cost},${h.quantity},${h.current_price})">Sell</button></div></td>
+        <td><div class="row-actions"><button class="action-btn" onclick="openBuyMoreModal(${h.id},'${esc(h.name)}','${esc(h.ticker||'')}','${esc(h.asset_type)}',${h.current_price})">Buy</button><button class="action-btn" onclick="openSellModal(${h.id},'${esc(h.name)}',${h.avg_cost},${h.quantity},${h.current_price})">Sell</button><button class="action-btn capital-btn" onclick="openCapIncModal(${h.id},'${esc(h.name)}',${h.quantity},${h.avg_cost},${h.current_price})">Cap+</button></div></td>
       </tr>`;
     }).join('');
   } else {
@@ -1214,9 +1255,9 @@ function renderTransactions(txs) {
   empty.style.display='none';
 
   list.innerHTML = txs.map(tx => {
-    const dotCls = tx.tx_type==='BUY'?'buy':tx.tx_type==='SELL'?'sell':'cash';
-    const amtColor = tx.tx_type==='SELL'||tx.tx_type==='WITHDRAW'?'var(--red)':tx.tx_type==='DEPOSIT'?'var(--accent)':'var(--accent2)';
-    const amtStr = (tx.tx_type==='SELL'||tx.tx_type==='WITHDRAW'?'-':'+') + fmt(tx.total);
+    const dotCls = tx.tx_type==='BUY'?'buy':tx.tx_type==='SELL'?'sell':tx.tx_type==='CAPITAL_INCREASE'?'buy':'cash';
+    const amtColor = tx.tx_type==='SELL'||tx.tx_type==='WITHDRAW'?'var(--red)':tx.tx_type==='CAPITAL_INCREASE'?'var(--accent)':tx.tx_type==='DEPOSIT'?'var(--accent)':'var(--accent2)';
+    const amtStr = tx.tx_type==='CAPITAL_INCREASE' ? `+${tx.quantity} shares` : (tx.tx_type==='SELL'||tx.tx_type==='WITHDRAW'?'-':'+') + fmt(tx.total);
     const pnlHtml = tx.realized_pnl != null
       ? `<div style="font-size:10px;color:${tx.realized_pnl>=0?'var(--accent)':'var(--red)'}">P&L: ${fmtS(tx.realized_pnl)}</div>` : '';
     return `<div class="tx-item" id="tx-row-${tx.id}">
@@ -1564,6 +1605,53 @@ async function executeSell() {
     const note = cur !== 'SAR' ? ` (${cur} ${rawPrice.toFixed(2)} → ر.س ${sarPrice.toFixed(2)})` : '';
     closeModal('sell-modal');
     notify(`Sold ${qty} units${note} — ${fmt(proceeds)} added to cash`);
+    await loadAll();
+  } catch(e) { notify(e.message, true); }
+}
+
+// ── Capital Increase ──────────────────────────────────────────────────────────
+let activeCapIncId = null;
+let capIncCurQty   = 0;
+let capIncCurAvg   = 0;
+
+function openCapIncModal(id, name, curQty, curAvg, curPrice) {
+  activeCapIncId = id;
+  capIncCurQty   = curQty;
+  capIncCurAvg   = curAvg;
+  document.getElementById('cap-inc-name').textContent    = name;
+  document.getElementById('cap-inc-cur-qty').textContent = curQty.toLocaleString('en-US', {maximumFractionDigits:6});
+  document.getElementById('cap-inc-cur-avg').textContent = curAvg.toFixed(2);
+  document.getElementById('cap-inc-shares').value = '';
+  document.getElementById('cap-inc-price').value  = '';
+  document.getElementById('cap-inc-date').value   = today();
+  document.getElementById('cap-inc-preview').style.display = 'none';
+  openModal('cap-inc-modal');
+}
+
+function updateCapIncPreview() {
+  const newShares = parseFloat(document.getElementById('cap-inc-shares').value);
+  const el = document.getElementById('cap-inc-preview');
+  if (!newShares || newShares <= 0) { el.style.display = 'none'; return; }
+  const newQty  = capIncCurQty + newShares;
+  const newAvg  = (capIncCurQty * capIncCurAvg) / newQty;
+  document.getElementById('cap-inc-new-qty').textContent = newQty.toLocaleString('en-US', {maximumFractionDigits:6});
+  document.getElementById('cap-inc-new-avg').textContent = 'SAR ' + newAvg.toFixed(4);
+  el.style.display = 'flex';
+}
+
+async function executeCapInc() {
+  const newShares = parseFloat(document.getElementById('cap-inc-shares').value);
+  const newPrice  = parseFloat(document.getElementById('cap-inc-price').value) || null;
+  const date      = document.getElementById('cap-inc-date').value;
+  if (!newShares || newShares <= 0) return notify('Enter a valid number of bonus shares.', true);
+  try {
+    const updated = await api('POST', `/api/portfolio/holdings/${activeCapIncId}/capital-increase`, {
+      new_shares: newShares,
+      new_price:  newPrice,
+      tx_date:    date || null,
+    });
+    closeModal('cap-inc-modal');
+    notify(`Capital increase applied — ${newShares} bonus shares added. New avg cost: SAR ${updated.avg_cost.toFixed(4)}`);
     await loadAll();
   } catch(e) { notify(e.message, true); }
 }

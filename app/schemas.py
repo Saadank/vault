@@ -76,6 +76,13 @@ class SellRequest(BaseModel):
     notes:      Optional[str] = None
 
 
+class CapitalIncreaseRequest(BaseModel):
+    new_shares:    float = Field(..., gt=0, description="Number of bonus shares received")
+    new_price:     Optional[float] = Field(None, gt=0, description="Post-adjustment current price")
+    tx_date:       Optional[str] = None
+    notes:         Optional[str] = None
+
+
 class CashRequest(BaseModel):
     amount: float = Field(..., gt=0)
     notes:  Optional[str] = None

@@ -221,6 +221,29 @@ async def delete_transaction(
         cash.balance += tx.total
         reversal_detail = f"Restored {tx.total:.2f} SAR to cash"
 
+    # ── CAPITAL_INCREASE reversal ─────────────────────────────────────────────
+    elif tx.tx_type == "CAPITAL_INCREASE" and tx.asset_name and tx.quantity:
+        holding_result = await db.execute(
+            select(Holding).where(
+                Holding.user_id == user.id,
+                Holding.name == tx.asset_name,
+            )
+        )
+        holding = holding_result.scalar_one_or_none()
+        if holding:
+            new_qty = round(holding.quantity - tx.quantity, 10)
+            if new_qty <= 1e-9:
+                await db.delete(holding)
+                reversal_detail = f"Removed holding {tx.asset_name} (zero remaining after reversal)"
+            else:
+                # Reverse: total cost stays the same, spread back over fewer shares
+                total_cost = holding.quantity * holding.avg_cost
+                holding.quantity = new_qty
+                holding.avg_cost = total_cost / new_qty
+                reversal_detail = f"Removed {tx.quantity} bonus shares from {tx.asset_name}, avg cost restored"
+        else:
+            reversal_detail = f"Holding {tx.asset_name} not found; only transaction record deleted"
+
     await db.delete(tx)
     await db.commit()
 

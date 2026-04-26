@@ -81,6 +81,13 @@ class CashRequest(BaseModel):
     notes:  Optional[str] = None
 
 
+class CapitalIncreaseRequest(BaseModel):
+    holding_id: int
+    new_shares: float = Field(..., gt=0)
+    tx_date:    Optional[str] = None
+    notes:      Optional[str] = None
+
+
 class TransactionOut(BaseModel):
     id:           int
     tx_type:      str

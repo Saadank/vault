@@ -666,6 +666,46 @@
   </div>
 </div>
 
+<!-- Capital Increase Modal -->
+<div class="modal-overlay" id="capinc-modal">
+  <div class="modal">
+    <div class="modal-title">
+      زيادة رأس المال — <span id="capinc-name"></span>
+      <button class="modal-close" onclick="closeModal('capinc-modal')">×</button>
+    </div>
+    <div class="info-row">
+      <span class="lbl">Current Qty</span>
+      <span class="val" id="capinc-current-qty"></span>
+    </div>
+    <div class="info-row">
+      <span class="lbl">Current Avg Cost</span>
+      <span class="val" id="capinc-current-avg"></span>
+    </div>
+    <div class="form-group" style="margin-top:12px;">
+      <label>New Bonus Shares Received</label>
+      <input type="number" id="capinc-shares" placeholder="0" step="any" min="0" oninput="updateCapIncPreview()">
+    </div>
+    <div class="form-group">
+      <label>Date</label>
+      <input type="date" id="capinc-date">
+    </div>
+    <div class="form-group">
+      <label>Notes (optional)</label>
+      <input type="text" id="capinc-notes" placeholder="">
+    </div>
+    <div id="capinc-preview" style="display:none;background:var(--surface2);border:1px solid var(--border2);border-radius:var(--r-sm);padding:12px;margin-bottom:12px;">
+      <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px;">After Capital Increase</div>
+      <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:12px;">
+        <span style="color:var(--muted);">New Qty</span><span id="capinc-new-qty" style="color:var(--text);font-weight:600;"></span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:12px;margin-top:4px;">
+        <span style="color:var(--muted);">New Avg Cost</span><span id="capinc-new-avg" style="color:var(--accent);font-weight:600;"></span>
+      </div>
+    </div>
+    <button class="btn" onclick="executeCapInc()">Confirm</button>
+  </div>
+</div>
+
 <div class="notif" id="notif"></div>
 
 <script>
@@ -675,6 +715,7 @@ let cashBalance = 0;
 let activeSellId = null;
 let activePriceId = null;
 let cashMode = 'deposit';
+let activeCapIncId = null;
 
 // Ticker validation — must be true before market assets can be submitted
 let tickerValidated = false;
@@ -882,7 +923,7 @@ function renderHoldings() {
           <div style="font-size:10px;color:var(--muted);margin-top:1px;">${pnlSign}USD ${Math.abs(pnl/usdRate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
           <div style="font-size:11px;margin-top:1px;">${pctSign}${pct.toFixed(2)}%</div>
         </td>
-        <td><div class="row-actions"><button class="action-btn" onclick="openBuyMoreModal(${h.id},'${esc(h.name)}','${esc(h.ticker||'')}','${esc(h.asset_type)}',${h.current_price})">Buy</button><button class="action-btn" onclick="openSellModal(${h.id},'${esc(h.name)}',${h.avg_cost},${h.quantity},${h.current_price})">Sell</button></div></td>
+        <td><div class="row-actions"><button class="action-btn" onclick="openBuyMoreModal(${h.id},'${esc(h.name)}','${esc(h.ticker||'')}','${esc(h.asset_type)}',${h.current_price})">Buy</button><button class="action-btn" onclick="openSellModal(${h.id},'${esc(h.name)}',${h.avg_cost},${h.quantity},${h.current_price})">Sell</button><button class="action-btn" onclick="openCapIncModal(${h.id},'${esc(h.name)}',${h.quantity},${h.avg_cost})" title="Capital Increase / Bonus Shares">Cap+</button></div></td>
       </tr>`;
     }).join('');
   } else {
@@ -919,16 +960,20 @@ function renderTransactions(txs) {
   empty.style.display='none';
 
   list.innerHTML = txs.map(tx => {
-    const dotCls = tx.tx_type==='BUY'?'buy':tx.tx_type==='SELL'?'sell':'cash';
-    const amtColor = tx.tx_type==='SELL'||tx.tx_type==='WITHDRAW'?'var(--red)':tx.tx_type==='DEPOSIT'?'var(--accent)':'var(--accent2)';
-    const amtStr = (tx.tx_type==='SELL'||tx.tx_type==='WITHDRAW'?'-':'+') + fmt(tx.total);
+    const isCapInc = tx.tx_type === 'CAPITAL_INCREASE';
+    const dotCls = tx.tx_type==='BUY'?'buy':tx.tx_type==='SELL'?'sell':isCapInc?'buy':'cash';
+    const amtColor = tx.tx_type==='SELL'||tx.tx_type==='WITHDRAW'?'var(--red)':tx.tx_type==='DEPOSIT'?'var(--accent)':isCapInc?'var(--accent2)':'var(--accent2)';
+    const amtStr = isCapInc
+      ? `+${tx.quantity != null ? tx.quantity.toLocaleString('en-US',{maximumFractionDigits:6}) : ''} shares`
+      : (tx.tx_type==='SELL'||tx.tx_type==='WITHDRAW'?'-':'+') + fmt(tx.total);
+    const typeLabel = isCapInc ? 'زيادة رأس المال' : tx.tx_type;
     const pnlHtml = tx.realized_pnl != null
       ? `<div style="font-size:10px;color:${tx.realized_pnl>=0?'var(--accent)':'var(--red)'}">P&L: ${fmtS(tx.realized_pnl)}</div>` : '';
     return `<div class="tx-item" id="tx-row-${tx.id}">
       <span class="tx-dot ${dotCls}"></span>
       <div style="flex:1;min-width:0;">
-        <div class="tx-name">${tx.tx_type} — ${esc(tx.asset_name||'')}</div>
-        ${tx.quantity?`<div class="tx-date">${tx.quantity} units @ ${fmt(tx.price)}</div>`:''}
+        <div class="tx-name">${typeLabel} — ${esc(tx.asset_name||'')}</div>
+        ${isCapInc && tx.quantity ? `<div class="tx-date">+${tx.quantity.toLocaleString('en-US',{maximumFractionDigits:6})} bonus shares (no cost)</div>` : tx.quantity?`<div class="tx-date">${tx.quantity} units @ ${fmt(tx.price)}</div>`:''}
         <div class="tx-date">${tx.tx_date||''}</div>
         ${pnlHtml}
       </div>
@@ -1269,6 +1314,52 @@ async function executeSell() {
     const note = cur !== 'SAR' ? ` (${cur} ${rawPrice.toFixed(2)} → ر.س ${sarPrice.toFixed(2)})` : '';
     closeModal('sell-modal');
     notify(`Sold ${qty} units${note} — ${fmt(proceeds)} added to cash`);
+    await loadAll();
+  } catch(e) { notify(e.message, true); }
+}
+
+// ── Capital Increase ──────────────────────────────────────────────────────────
+function openCapIncModal(id, name, qty, avgCost) {
+  activeCapIncId = id;
+  document.getElementById('capinc-name').textContent = name;
+  document.getElementById('capinc-current-qty').textContent = qty.toLocaleString('en-US', {maximumFractionDigits: 6});
+  document.getElementById('capinc-current-avg').textContent = 'SAR ' + parseFloat(avgCost).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  document.getElementById('capinc-shares').value = '';
+  document.getElementById('capinc-date').value = today();
+  document.getElementById('capinc-notes').value = '';
+  document.getElementById('capinc-preview').style.display = 'none';
+  document.getElementById('capinc-modal').dataset.qty = qty;
+  document.getElementById('capinc-modal').dataset.avgCost = avgCost;
+  openModal('capinc-modal');
+}
+
+function updateCapIncPreview() {
+  const newShares = parseFloat(document.getElementById('capinc-shares').value);
+  const oldQty    = parseFloat(document.getElementById('capinc-modal').dataset.qty);
+  const oldAvg    = parseFloat(document.getElementById('capinc-modal').dataset.avgCost);
+  const preview   = document.getElementById('capinc-preview');
+  if (!newShares || newShares <= 0) { preview.style.display = 'none'; return; }
+  const newQty    = oldQty + newShares;
+  const newAvg    = (oldQty * oldAvg) / newQty;
+  document.getElementById('capinc-new-qty').textContent = newQty.toLocaleString('en-US', {maximumFractionDigits: 6});
+  document.getElementById('capinc-new-avg').textContent = 'SAR ' + newAvg.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 4});
+  preview.style.display = 'block';
+}
+
+async function executeCapInc() {
+  const newShares = parseFloat(document.getElementById('capinc-shares').value);
+  const date      = document.getElementById('capinc-date').value;
+  const notes     = document.getElementById('capinc-notes').value;
+  if (!newShares || newShares <= 0) return notify('Enter a valid number of bonus shares.', true);
+  try {
+    await api('POST', '/api/portfolio/capital-increase', {
+      holding_id: activeCapIncId,
+      new_shares: newShares,
+      tx_date: date || null,
+      notes: notes || null,
+    });
+    closeModal('capinc-modal');
+    notify(`Capital increase recorded: +${newShares.toLocaleString('en-US', {maximumFractionDigits: 6})} shares added`);
     await loadAll();
   } catch(e) { notify(e.message, true); }
 }

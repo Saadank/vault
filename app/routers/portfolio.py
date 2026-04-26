@@ -11,7 +11,7 @@ from app.database import get_db, User, Holding, Transaction, CashBalance
 from app.auth import get_current_user
 from app.schemas import (
     HoldingCreate, HoldingOut, HoldingUpdate, NotesUpdate,
-    SellRequest, TransactionOut, PortfolioSummary
+    SellRequest, TransactionOut, PortfolioSummary, CapitalIncreaseRequest
 )
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
@@ -247,6 +247,44 @@ async def sell_holding(
         price=data.price,
         total=proceeds,
         realized_pnl=realized_pnl,
+        tx_date=data.tx_date or datetime.utcnow().strftime("%Y-%m-%d"),
+        notes=data.notes,
+    )
+    db.add(tx)
+    await db.commit()
+    await db.refresh(tx)
+    return tx
+
+
+# ── Capital Increase (bonus shares) ──────────────────────────────────────────
+@router.post("/capital-increase", response_model=TransactionOut, status_code=201)
+async def capital_increase(
+    data: CapitalIncreaseRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Holding).where(Holding.id == data.holding_id, Holding.user_id == user.id)
+    )
+    holding = result.scalar_one_or_none()
+    if not holding:
+        raise HTTPException(404, "Holding not found")
+
+    old_qty      = holding.quantity
+    new_qty      = old_qty + data.new_shares
+    # Total cost basis stays the same; spread over more shares → lower avg cost
+    new_avg_cost = (old_qty * holding.avg_cost) / new_qty
+
+    holding.quantity = new_qty
+    holding.avg_cost = new_avg_cost
+
+    tx = Transaction(
+        user_id=user.id,
+        tx_type="CAPITAL_INCREASE",
+        asset_name=holding.name,
+        quantity=data.new_shares,
+        price=0.0,
+        total=0.0,
         tx_date=data.tx_date or datetime.utcnow().strftime("%Y-%m-%d"),
         notes=data.notes,
     )

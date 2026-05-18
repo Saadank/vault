@@ -927,15 +927,17 @@ function renderHoldings() {
       </tr>`;
     }).join('');
   } else {
-    // ── Light mode: minimal table — name, qty, avg cost, price, % ──
+    // ── Light mode: minimal table — name, qty, avg cost, price, market value, % ──
     thead.innerHTML = `<tr>
       ${_thHTML('Asset','name')}
       ${_thHTML('Qty','qty')}
       ${_thHTML('Avg Cost','avg_cost')}
       ${_thHTML('Current Price','price')}
+      ${_thHTML('Market Value','mv')}
       ${_thHTML('Change','pct')}
     </tr>`;
     tbody.innerHTML = visible.map(h => {
+      const mv      = h.quantity * h.current_price;
       const pct     = h.avg_cost > 0 ? (h.current_price - h.avg_cost) / h.avg_cost * 100 : 0;
       const pc      = pct >= 0 ? 'pnl-pos' : 'pnl-neg';
       const pctSign = pct >= 0 ? '+' : '';
@@ -946,6 +948,10 @@ function renderHoldings() {
         <td>
           ${tFmt(h.current_price)}
           <button class="update-price-btn" onclick="openPriceModal(${h.id},'${esc(h.name)}',${h.current_price},${h.avg_cost})">update</button>
+        </td>
+        <td>
+          ${tFmt(mv)}
+          ${tSub(mv / usdRate)}
         </td>
         <td class="${pc}" style="font-weight:700;font-size:13px;letter-spacing:0.02em;">${pctSign}${pct.toFixed(2)}%</td>
       </tr>`;

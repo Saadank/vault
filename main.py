@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 load_dotenv()  # loads .env locally; no-op on Railway where env vars are set directly
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Depends
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -26,7 +26,7 @@ from fastapi.templating import Jinja2Templates
 os.makedirs("static", exist_ok=True)
 
 from app.database import init_db, SessionLocal, User
-from app.auth import get_current_user_optional
+# auth middleware no longer needed for page routes (SPA handles it)
 from app.routers import auth, portfolio, cash, prices, chat, analytics
 from app.routers.prices import _take_hourly_snapshot, _refresh_holding_prices, _take_holding_snapshot
 from sqlalchemy import select
@@ -126,37 +126,27 @@ app.include_router(chat.router)
 app.include_router(analytics.router)
 
 
-# ── Page routes ───────────────────────────────────────────────────────────────
-@app.get("/", response_class=HTMLResponse)
-async def root(request: Request, user=Depends(get_current_user_optional)):
-    if user:
-        return RedirectResponse("/dashboard")
-    return RedirectResponse("/login")
+# ── SPA shell — all page routes serve index.html ─────────────────────────────
+# Auth state and routing are handled client-side by the React app.
+
+def _spa(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
-@app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, user=Depends(get_current_user_optional)):
-    if user:
-        return RedirectResponse("/dashboard")
-    return templates.TemplateResponse("login.html", {"request": request})
+@app.get("/",             response_class=HTMLResponse)
+async def root(request: Request):          return _spa(request)
 
+@app.get("/login",        response_class=HTMLResponse)
+async def login_page(request: Request):    return _spa(request)
 
-@app.get("/register", response_class=HTMLResponse)
-async def register_page(request: Request, user=Depends(get_current_user_optional)):
-    if user:
-        return RedirectResponse("/dashboard")
-    return templates.TemplateResponse("register.html", {"request": request})
+@app.get("/register",     response_class=HTMLResponse)
+async def register_page(request: Request): return _spa(request)
 
+@app.get("/dashboard",    response_class=HTMLResponse)
+async def dashboard(request: Request):     return _spa(request)
 
-@app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard(request: Request, user=Depends(get_current_user_optional)):
-    if not user:
-        return RedirectResponse("/login")
-    return templates.TemplateResponse("dashboard.html", {"request": request, "user": user})
+@app.get("/analytics",    response_class=HTMLResponse)
+async def analytics_page(request: Request): return _spa(request)
 
-
-@app.get("/analytics", response_class=HTMLResponse)
-async def analytics_page(request: Request, user=Depends(get_current_user_optional)):
-    if not user:
-        return RedirectResponse("/login")
-    return templates.TemplateResponse("analytics.html", {"request": request, "user": user})
+@app.get("/transactions", response_class=HTMLResponse)
+async def transactions_page(request: Request): return _spa(request)

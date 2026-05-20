@@ -6,19 +6,36 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openBuy, open
   const [hoverPt, setHoverPt] = React.useState(null);
   const [primaryCcy, setPrimaryCcy] = React.useState(tweaks.primaryCcy || "SAR");
   const [rowMenu, setRowMenu] = React.useState(null);
+  const [sort, setSort] = React.useState({ col: "unrealized_pnl_sar", dir: -1 });
+
+  const toggleSort = (col) => {
+    setSort(s => s.col === col ? { col, dir: s.dir * -1 } : { col, dir: -1 });
+  };
+
+  const sortedHoldings = React.useMemo(() => {
+    return [...holdings].sort((a, b) => {
+      const va = a[sort.col], vb = b[sort.col];
+      if (typeof va === "string") return sort.dir * va.localeCompare(vb);
+      return sort.dir * ((va ?? 0) - (vb ?? 0));
+    });
+  }, [holdings, sort]);
 
   React.useEffect(() => { setPrimaryCcy(tweaks.primaryCcy || "SAR"); }, [tweaks.primaryCcy]);
 
   const filteredChart = React.useMemo(() => {
-    const n = chart.length;
-    const slice = {
-      "1D": 1, "1W": 7, "1M": 30, "3M": 90, "YTD": (function () {
-        const today = new Date();
-        const start = new Date(today.getFullYear(), 0, 1);
-        return Math.floor((today - start) / (1000 * 60 * 60 * 24));
-      })(), "1Y": 365, "Max": n,
-    }[range] || 30;
-    return chart.slice(Math.max(0, n - slice));
+    if (!chart || chart.length === 0) return [];
+    if (range === "Max") return chart;
+    const today = new Date();
+    const cutoff = new Date(today);
+    if      (range === "1D")  cutoff.setDate(today.getDate() - 1);
+    else if (range === "1W")  cutoff.setDate(today.getDate() - 7);
+    else if (range === "1M")  cutoff.setMonth(today.getMonth() - 1);
+    else if (range === "3M")  cutoff.setMonth(today.getMonth() - 3);
+    else if (range === "YTD") { cutoff.setMonth(0); cutoff.setDate(1); }
+    else if (range === "1Y")  cutoff.setFullYear(today.getFullYear() - 1);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const filtered = chart.filter(p => p.date >= cutoffStr);
+    return filtered.length > 1 ? filtered : chart.slice(-2);
   }, [chart, range]);
 
   const totalValue = summary.total_value;
@@ -34,7 +51,12 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openBuy, open
         <div className="col gap-4">
           <div className="eyebrow">Portfolio · {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div>
           <h1 className="serif" style={{ fontSize: 34, lineHeight: 1, letterSpacing: "-0.01em" }}>
-            Good morning, Saad.
+            {(() => {
+              const h = new Date().getHours();
+              const greet = h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+              const name = data.user?.full_name?.split(" ")[0] || data.user?.username || "there";
+              return `${greet}, ${name}.`;
+            })()}
           </h1>
         </div>
         <div className="row gap-8">
@@ -96,7 +118,7 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openBuy, open
                 </div>
               )}
               {k.deltaUp && (
-                <div style={{ marginTop: 4, fontSize: 11.5 }} className="dim">From {summary.positions_count + 2} trades</div>
+                <div style={{ marginTop: 4, fontSize: 11.5 }} className="dim">From closed positions</div>
               )}
             </div>
           ))}
@@ -129,20 +151,33 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openBuy, open
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>Asset</th>
-                  <th>Type</th>
-                  <th className="num-cell right">Qty</th>
-                  <th className="num-cell right">Avg Cost</th>
-                  <th className="num-cell right">Price</th>
-                  <th className="num-cell right">Value (SAR)</th>
-                  <th className="num-cell right">Value (USD)</th>
-                  <th className="num-cell right">P&L</th>
-                  <th className="num-cell right">Return</th>
+                  {[
+                    { label: "Asset",       col: "name",               cls: "" },
+                    { label: "Type",        col: null,                 cls: "" },
+                    { label: "Qty",         col: "quantity",           cls: "num-cell right" },
+                    { label: "Avg Cost",    col: "avg_cost",           cls: "num-cell right" },
+                    { label: "Price",       col: "current_price",      cls: "num-cell right" },
+                    { label: "Value (SAR)", col: "market_value_sar",   cls: "num-cell right" },
+                    { label: "Value (USD)", col: "market_value_usd",   cls: "num-cell right" },
+                    { label: "P&L",         col: "unrealized_pnl_sar", cls: "num-cell right" },
+                    { label: "Return",      col: "unrealized_pct",     cls: "num-cell right" },
+                  ].map(({ label, col, cls }) => (
+                    <th key={label} className={cls}
+                        onClick={col ? () => toggleSort(col) : undefined}
+                        style={col ? { cursor: "pointer", userSelect: "none" } : {}}>
+                      {label}
+                      {col && sort.col === col && (
+                        <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>
+                          {sort.dir === -1 ? "▼" : "▲"}
+                        </span>
+                      )}
+                    </th>
+                  ))}
                   <th style={{ width: 64 }}></th>
                 </tr>
               </thead>
               <tbody>
-                {holdings.map(h => {
+                {sortedHoldings.map(h => {
                   const up = h.unrealized_pct >= 0;
                   return (
                     <tr key={h.id}>

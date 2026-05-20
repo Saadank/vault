@@ -2,7 +2,29 @@
 
 const Analytics = ({ data, onSendReport }) => {
   const { overview, allocation, pnl, monthlyTx, mostTraded, cashflow, scoreboard, fmt, summary } = data;
-  const [allocMode, setAllocMode] = React.useState("type"); // type | holding
+  const [allocMode, setAllocMode] = React.useState("type");
+  const [pnlSort, setPnlSort] = React.useState({ col: "total", dir: -1 });
+  const [sbSort, setSbSort] = React.useState({ col: "total_pnl", dir: -1 });
+
+  const mkToggle = (setFn) => (col) =>
+    setFn(s => ({ col, dir: s.col === col ? s.dir * -1 : -1 }));
+
+  const sortRows = (rows, { col, dir }) =>
+    [...rows].sort((a, b) => {
+      const va = a[col], vb = b[col];
+      if (typeof va === "string") return dir * va.localeCompare(vb);
+      return dir * ((va ?? 0) - (vb ?? 0));
+    });
+
+  const SortTh = ({ label, col, sortState, onToggle, cls = "" }) => (
+    <th className={cls} onClick={() => onToggle(col)}
+        style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
+      {label}
+      <span style={{ marginLeft: 4, fontSize: 9, opacity: sortState.col === col ? 0.8 : 0.25 }}>
+        {sortState.col === col ? (sortState.dir === -1 ? "▼" : "▲") : "⇅"}
+      </span>
+    </th>
+  );
 
   const allocData = allocMode === "type" ? allocation.by_type : allocation.current;
   const allocLabel = allocMode === "type" ? "asset_type" : "name";
@@ -204,22 +226,22 @@ const Analytics = ({ data, onSendReport }) => {
           <div className="card" style={{ overflow: "hidden" }}>
             <div className="row between" style={{ padding: "16px 20px" }}>
               <h4 className="serif" style={{ fontSize: 18 }}>P&L by asset</h4>
-              <div className="dim" style={{ fontSize: 11.5 }}>Sorted by total contribution</div>
+              <div className="dim" style={{ fontSize: 11.5 }}>Click any column to sort</div>
             </div>
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>Asset</th>
-                  <th>Type</th>
-                  <th className="num-cell right">Realized</th>
-                  <th className="num-cell right">Unrealized</th>
-                  <th className="num-cell right">Total</th>
-                  <th className="num-cell right">Return %</th>
+                  <SortTh label="Asset"    col="name"        sortState={pnlSort} onToggle={mkToggle(setPnlSort)} />
+                  <SortTh label="Type"     col="asset_type"  sortState={pnlSort} onToggle={mkToggle(setPnlSort)} />
+                  <SortTh label="Realized"   col="realized"   sortState={pnlSort} onToggle={mkToggle(setPnlSort)} cls="num-cell right" />
+                  <SortTh label="Unrealized" col="unrealized" sortState={pnlSort} onToggle={mkToggle(setPnlSort)} cls="num-cell right" />
+                  <SortTh label="Total"      col="total"      sortState={pnlSort} onToggle={mkToggle(setPnlSort)} cls="num-cell right" />
+                  <SortTh label="Return %"   col="return_pct" sortState={pnlSort} onToggle={mkToggle(setPnlSort)} cls="num-cell right" />
                   <th style={{ width: 120 }}>Contribution</th>
                 </tr>
               </thead>
               <tbody>
-                {pnl.by_asset.map((row, i) => {
+                {sortRows(pnl.by_asset, pnlSort).map((row, i) => {
                   const maxAbs = Math.max(...pnl.by_asset.map(r => Math.abs(r.total)));
                   const w = (Math.abs(row.total) / maxAbs) * 100;
                   return (
@@ -347,18 +369,18 @@ const Analytics = ({ data, onSendReport }) => {
             <thead>
               <tr>
                 <th style={{ width: 40 }}>#</th>
-                <th>Asset</th>
-                <th>Type</th>
+                <SortTh label="Asset"        col="name"         sortState={sbSort} onToggle={mkToggle(setSbSort)} />
+                <SortTh label="Type"         col="asset_type"   sortState={sbSort} onToggle={mkToggle(setSbSort)} />
                 <th>Status</th>
-                <th className="num-cell right">Invested</th>
-                <th className="num-cell right">Market Value</th>
-                <th className="num-cell right">Total P&L</th>
-                <th className="num-cell right">Return %</th>
-                <th>First bought</th>
+                <SortTh label="Invested"     col="invested"     sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
+                <SortTh label="Market Value" col="market_value" sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
+                <SortTh label="Total P&L"    col="total_pnl"    sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
+                <SortTh label="Return %"     col="return_pct"   sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
+                <SortTh label="First bought" col="first_bought" sortState={sbSort} onToggle={mkToggle(setSbSort)} />
               </tr>
             </thead>
             <tbody>
-              {scoreboard.map((s, i) => (
+              {sortRows(scoreboard, sbSort).map((s, i) => (
                 <tr key={s.name}>
                   <td>
                     <span className="serif" style={{ fontSize: 16, color: i < 3 ? "var(--accent)" : "var(--ink-3)" }}>{i + 1}</span>

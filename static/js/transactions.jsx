@@ -3,6 +3,7 @@
 const Transactions = ({ data, onReload }) => {
   const { fmt } = data;
   const [filter, setFilter] = React.useState("ALL");
+  const [search, setSearch] = React.useState("");
   const [pendingDelete, setPendingDelete] = React.useState(null);
   const [deleting, setDeleting] = React.useState(false);
   const [list, setList] = React.useState(data.transactions);
@@ -12,7 +13,12 @@ const Transactions = ({ data, onReload }) => {
 
   const types = ["ALL", "BUY", "SELL", "DEPOSIT", "WITHDRAW", "CAPITAL_INCREASE"];
 
-  const filtered = filter === "ALL" ? list : list.filter(t => t.tx_type === filter);
+  const filtered = list.filter(t => {
+    const matchType = filter === "ALL" || t.tx_type === filter;
+    const q = search.trim().toLowerCase();
+    const matchSearch = !q || (t.asset_name || "").toLowerCase().includes(q) || (t.notes || "").toLowerCase().includes(q);
+    return matchType && matchSearch;
+  });
 
   // Group by month
   const grouped = React.useMemo(() => {
@@ -106,6 +112,7 @@ const Transactions = ({ data, onReload }) => {
           <div className="row gap-6" style={{ position: "relative" }}>
             <Icon name="search" size={13} style={{ position: "absolute", left: 10, top: 8, color: "var(--ink-3)" }} />
             <input placeholder="Find by asset or note…"
+                   value={search} onChange={e => setSearch(e.target.value)}
                    style={{
                      padding: "7px 12px 7px 30px",
                      border: "1px solid var(--line)", borderRadius: 7,

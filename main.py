@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 load_dotenv()  # loads .env locally; no-op on Railway where env vars are set directly
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -150,3 +150,12 @@ async def analytics_page(request: Request): return _spa(request)
 
 @app.get("/transactions", response_class=HTMLResponse)
 async def transactions_page(request: Request): return _spa(request)
+
+# ── PWA files — must be served from root scope ────────────────────────────────
+@app.get("/sw.js")
+async def service_worker():
+    return FileResponse(
+        "static/sw.js",
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/"},
+    )

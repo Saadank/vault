@@ -1,5 +1,17 @@
 // Root app — auth check, data loading, modal state, tweaks wiring.
 
+// ── Mobile detection ─────────────────────────────────────────────────────────
+function useMobile() {
+  const check = () => window.innerWidth < 768 || ("ontouchstart" in window && window.innerWidth < 1024);
+  const [isMobile, setIsMobile] = React.useState(check);
+  React.useEffect(() => {
+    const handler = () => setIsMobile(check());
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return isMobile;
+}
+
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "accent": "gold",
   "density": "comfortable",
@@ -8,6 +20,7 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 }/*EDITMODE-END*/;
 
 function App() {
+  const isMobile = useMobile();
   const [authState, setAuthState] = React.useState("checking"); // checking | loggedIn | loggedOut
   const [data, setData] = React.useState(null);
   const [loadError, setLoadError] = React.useState(null);
@@ -92,6 +105,19 @@ function App() {
     setReportOpen(true);
   };
 
+  // ── Mobile login — calls real API, then triggers handleLogin ──────────────
+  const handleMobileLogin = async ({ username, password }) => {
+    const form = new FormData();
+    form.append("username", username);
+    form.append("password", password);
+    const r = await fetch("/api/auth/login", { method: "POST", body: form, credentials: "include" });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.detail || "Incorrect username or password");
+    }
+    handleLogin();
+  };
+
   // ── Loading / error screens ────────────────────────────────────────────────
   if (authState === "checking") {
     return (
@@ -106,8 +132,13 @@ function App() {
     );
   }
 
-  // ── Auth routes ────────────────────────────────────────────────────────────
-  if (authState === "loggedOut" || route === "login") {
+  // ── Mobile auth ────────────────────────────────────────────────────────────
+  if (isMobile && (authState === "loggedOut" || route === "login")) {
+    return <MLogin onLogin={handleMobileLogin} />;
+  }
+
+  // ── Desktop auth routes ────────────────────────────────────────────────────
+  if (!isMobile && (authState === "loggedOut" || route === "login")) {
     return (
       <>
         <LoginScreen onLogin={handleLogin} setRoute={setRoute} />
@@ -115,7 +146,7 @@ function App() {
       </>
     );
   }
-  if (route === "register") {
+  if (!isMobile && route === "register") {
     return (
       <>
         <RegisterScreen onLogin={handleLogin} setRoute={setRoute} />
@@ -145,7 +176,22 @@ function App() {
     );
   }
 
-  // ── Main app shell ─────────────────────────────────────────────────────────
+  // ── Mobile app shell ───────────────────────────────────────────────────────
+  if (isMobile) {
+    return (
+      <>
+        <MobileApp
+          data={data}
+          afterAction={afterAction}
+          onLogout={handleLogout}
+          onRefresh={handleRefresh}
+        />
+        {toasts}
+      </>
+    );
+  }
+
+  // ── Desktop app shell ───────────────────────────────────────────────────────
   return (
     <>
       <div className="app">

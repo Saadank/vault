@@ -51,6 +51,7 @@ class NotesUpdate(BaseModel):
     notes: Optional[str] = None
 
 
+
 class HoldingOut(BaseModel):
     id:            int
     name:          str

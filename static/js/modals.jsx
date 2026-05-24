@@ -39,7 +39,7 @@ const Modal = ({ open, onClose, title, eyebrow, children, footer, width }) => {
 const CURRENCY_RATES = { SAR: 1, USD: 3.75, GBP: 4.73, EUR: 4.08, KWD: 12.19, AED: 1.02 };
 const toSAR = (amount, ccy) => amount * (CURRENCY_RATES[ccy] || 1);
 // Types that don't require a ticker (manual name entry, no search needed)
-const NO_TICKER_TYPES = new Set(["Bond", "Real Estate", "Alternative", "Other"]);
+const NO_TICKER_TYPES = new Set(["Fund", "Bond", "Real Estate", "Alternative", "Other"]);
 
 const BuyModal = ({ open, onClose, onConfirm, cashBalance }) => {
   const [step, setStep]               = React.useState("search");
@@ -251,10 +251,10 @@ const BuyModal = ({ open, onClose, onConfirm, cashBalance }) => {
           {/* Manual / non-market asset entry */}
           <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12 }}>
             <div className="dim" style={{ fontSize: 11.5, marginBottom: 8 }}>
-              Adding a bond, real estate, or other non-market asset?
+              Adding a fund, bond, real estate, or other non-market asset?
             </div>
             <div className="row gap-8" style={{ flexWrap: "wrap" }}>
-              {["Bond", "Real Estate", "Alternative", "Other"].map(t => (
+              {["Fund", "Bond", "Real Estate", "Alternative", "Other"].map(t => (
                 <button key={t} className="btn xs" onClick={() => goManual(t)}>
                   + {t}
                 </button>
@@ -338,7 +338,7 @@ const BuyModal = ({ open, onClose, onConfirm, cashBalance }) => {
               <label className="label">Asset type</label>
               <select className="input" value={assetType} onChange={e => setAssetType(e.target.value)}>
                 <option>Stock</option><option>ETF</option><option>Crypto</option>
-                <option>Real Estate</option><option>Bond</option><option>Alternative</option><option>Other</option>
+                <option>Fund</option><option>Real Estate</option><option>Bond</option><option>Alternative</option><option>Other</option>
               </select>
             </div>
             <div className="col" style={{ gridColumn: "1 / -1" }}>
@@ -347,6 +347,12 @@ const BuyModal = ({ open, onClose, onConfirm, cashBalance }) => {
                      placeholder="Long-term hold, dividend anchor…" />
             </div>
           </div>
+
+          {assetType === "Fund" && (
+            <div style={{ padding: "8px 12px", background: "var(--accent-soft)", border: "1px solid var(--line)", borderRadius: 8, fontSize: 12, color: "var(--ink-2)", lineHeight: 1.5 }}>
+              <strong style={{ color: "var(--accent-ink)" }}>Fund tracking tip:</strong> Set Quantity to <strong>1</strong> and Price to your <strong>total invested amount</strong>. You can update the current value later as the fund reports new prices.
+            </div>
+          )}
 
           {apiError && (
             <div style={{ padding: "8px 12px", background: "var(--loss-soft)", border: "1px solid var(--loss)", borderRadius: 8, color: "var(--loss)", fontSize: 12.5 }}>
@@ -881,4 +887,109 @@ const ChatDrawer = ({ open, onClose, summary }) => {
   );
 };
 
-Object.assign(window, { Modal, BuyModal, SellModal, CapitalIncreaseModal, CashModal, ChatDrawer });
+// ---- Update Current Price (manual assets: Fund, Bond, Real Estate, etc.) ----
+const UpdatePriceModal = ({ open, onClose, holding, onConfirm }) => {
+  const isFund = holding?.asset_type === "Fund";
+  const [value, setValue]       = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
+  const [apiError, setApiError] = React.useState("");
+
+  React.useEffect(() => {
+    if (open && holding) {
+      setValue(holding.current_price?.toString() || "");
+      setApiError("");
+    }
+  }, [open, holding]);
+
+  const valueN    = parseFloat(value) || 0;
+  const invested  = (holding?.quantity || 1) * (holding?.avg_cost || 0);
+  const newTotal  = (holding?.quantity || 1) * valueN;
+  const pnl       = newTotal - invested;
+  const canSubmit = valueN > 0 && !submitting;
+
+  const handleConfirm = async () => {
+    setSubmitting(true);
+    setApiError("");
+    try {
+      const r = await fetch(`/api/portfolio/holdings/${holding.id}/price`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ current_price: valueN }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.detail || "Update failed");
+      }
+      onConfirm && onConfirm({ holding, newPrice: valueN });
+      onClose();
+    } catch (err) {
+      setApiError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose}
+           eyebrow={`Update · ${holding?.asset_type || "Holding"}`}
+           title={holding?.name || "Update price"}
+           footer={(
+             <div className="row between">
+               <div className="col" style={{ fontSize: 12 }}>
+                 <div className="dim">{isFund ? "New total value" : "New current price"}</div>
+                 <div className="serif num" style={{ fontSize: 22, lineHeight: 1.1 }}>
+                   {VAULT_DATA.fmt.SAR(newTotal, { decimals: 2 })}
+                   <span style={{ fontFamily: "Geist", fontSize: 11, color: "var(--ink-2)", marginLeft: 6 }}>SAR</span>
+                 </div>
+               </div>
+               <div className="row gap-8">
+                 <button className="btn" onClick={onClose}>Cancel</button>
+                 <button className="btn gold" disabled={!canSubmit} onClick={handleConfirm}>
+                   {submitting ? <span className="dots"><span></span><span></span><span></span></span> : "Update"}
+                 </button>
+               </div>
+             </div>
+           )}>
+      <div className="col gap-16">
+        <div className="col gap-6">
+          <label className="label">{isFund ? "Current fund value (SAR)" : "New price per unit (SAR)"}</label>
+          <input className="input num" inputMode="decimal" autoFocus
+                 value={value} onChange={e => setValue(e.target.value)}
+                 placeholder={isFund ? "e.g. 4100" : "0.00"} />
+          {isFund && (
+            <div className="dim" style={{ fontSize: 11.5 }}>
+              Enter the total current value of this fund position as reported by your fund manager.
+            </div>
+          )}
+        </div>
+
+        <div className="col gap-8" style={{ padding: 14, borderRadius: 10, background: "var(--paper-2)", border: "1px solid var(--line)" }}>
+          <div className="row between">
+            <span className="dim">Amount invested</span>
+            <span className="num">{VAULT_DATA.fmt.SAR(invested, { decimals: 2 })} SAR</span>
+          </div>
+          <div className="row between">
+            <span className="dim">{isFund ? "New value" : "New market value"}</span>
+            <span className="num">{VAULT_DATA.fmt.SAR(newTotal, { decimals: 2 })} SAR</span>
+          </div>
+          <div className="hairline" />
+          <div className="row between" style={{ fontWeight: 500 }}>
+            <span className="dim">Unrealized P&L</span>
+            <span className={`num delta ${pnl >= 0 ? "up" : "down"}`}>
+              {pnl >= 0 ? "+" : ""}{VAULT_DATA.fmt.SAR(pnl, { decimals: 2 })} SAR
+            </span>
+          </div>
+        </div>
+
+        {apiError && (
+          <div style={{ padding: "8px 12px", background: "var(--loss-soft)", border: "1px solid var(--loss)", borderRadius: 8, color: "var(--loss)", fontSize: 12.5 }}>
+            {apiError}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+};
+
+Object.assign(window, { Modal, BuyModal, SellModal, CapitalIncreaseModal, CashModal, ChatDrawer, UpdatePriceModal });

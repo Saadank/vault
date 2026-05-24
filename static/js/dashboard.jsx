@@ -1,6 +1,6 @@
 // Dashboard screen — KPI strip, chart, holdings table, cash card
 
-const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openBuy, openDeposit, openWithdraw, openChat, onSendReport }) => {
+const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePrice, openBuy, openDeposit, openWithdraw, openChat, onSendReport }) => {
   const { summary, holdings, chart, fmt } = data;
   const [range, setRange] = React.useState("1M");
   const [hoverPt, setHoverPt] = React.useState(null);
@@ -206,6 +206,9 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openBuy, open
                       </td>
                       <td>
                         <div className="row-actions" style={{ justifyContent: "flex-end" }}>
+                          {h.asset_type === "Fund" && (
+                            <button className="btn xs gold" onClick={() => openUpdatePrice(h)}>Update value</button>
+                          )}
                           <button className="btn xs" onClick={() => openSell(h)}>Sell</button>
                           <button className="btn xs ghost" onClick={() => setRowMenu(rowMenu === h.id ? null : h.id)} style={{ padding: "4px 6px", position: "relative" }}>
                             <Icon name="dots" size={14} />
@@ -218,9 +221,8 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openBuy, open
                                 textAlign: "left",
                               }} onClick={e => e.stopPropagation()}>
                                 {[
-                                  { label: "Edit price / cost", icon: "edit" },
+                                  { label: "Update price", icon: "edit", onClick: () => { openUpdatePrice(h); setRowMenu(null); } },
                                   { label: "Bonus shares", icon: "gift", onClick: () => { openCapInc(h); setRowMenu(null); } },
-                                  { label: "Edit notes", icon: "edit" },
                                   { label: "Delete holding", icon: "trash", danger: true },
                                 ].map((it, i) => (
                                   <button key={i} onClick={e => { e.stopPropagation(); it.onClick && it.onClick(); }}

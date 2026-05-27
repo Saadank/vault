@@ -38,6 +38,8 @@ const MIcon = ({ name, size = 20, color = "currentColor", stroke = 1.6, style })
     apple: <path d="M16 4c-1.5 0-3 1.2-3 2.5 1.6 0 3-1.4 3-2.5Zm3.5 6c-1.5-2-4-2-5-2s-2 .7-3 .7S9.5 8 8 8c-2 0-4 2-4 5.5 0 4 3 8.5 5 8.5 1 0 1.7-.7 3-.7 1.4 0 2 .7 3 .7 2 0 4-3 4.5-5.5-2-.7-3-3-3-4 0-1.4 1-2.5 3-2.5Z" />,
     face: <><circle cx="12" cy="12" r="9" /><path d="M9 10h.01M15 10h.01M9 15c1 1 2 1.5 3 1.5s2-.5 3-1.5" /></>,
     arrowDown: <path d="M12 5v14m-6-6 6 6 6-6" />,
+    camera: <><rect x="2" y="7" width="20" height="15" rx="2"/><circle cx="12" cy="14" r="4"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></>,
+    scan: <><path d="M3 9V5a2 2 0 0 1 2-2h4M3 15v4a2 2 0 0 0 2 2h4M15 3h4a2 2 0 0 1 2 2v4M15 21h4a2 2 0 0 0 2-2v-4"/><rect x="8" y="8" width="8" height="8" rx="1"/></>,
     arrowUp: <path d="M12 19V5m-6 6 6-6 6 6" />,
     vault: <>
       <rect x="3" y="5" width="18" height="14" rx="2" />

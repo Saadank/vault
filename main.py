@@ -30,7 +30,7 @@ os.makedirs("static", exist_ok=True)
 
 from app.database import init_db, SessionLocal, User
 # auth middleware no longer needed for page routes (SPA handles it)
-from app.routers import auth, portfolio, cash, prices, chat, analytics
+from app.routers import auth, portfolio, cash, prices, chat, analytics, ocr
 from app.routers.prices import _take_hourly_snapshot, _refresh_holding_prices, _take_holding_snapshot
 from sqlalchemy import select
 
@@ -127,6 +127,7 @@ app.include_router(cash.router)
 app.include_router(prices.router)
 app.include_router(chat.router)
 app.include_router(analytics.router)
+app.include_router(ocr.router)
 
 
 # ── SPA shell ─────────────────────────────────────────────────────────────────

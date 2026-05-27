@@ -59,7 +59,7 @@ function MobileApp({ data, afterAction, onLogout, onRefresh }) {
     }
   };
 
-  // ── Sell ────────────────────────────────────────────────────────────────────
+  // ── Sell (used by both manual and OCR scan) ─────────────────────────────────
   const handleSell = async (args) => {
     try {
       await mobileApiFetch("/api/portfolio/sell", {
@@ -161,11 +161,27 @@ function MobileApp({ data, afterAction, onLogout, onRefresh }) {
     }}>
       {screen}
 
-      {/* Floating Action Button — Add Holding */}
+      {/* Floating Action Buttons — Add Holding + Scan Invoice */}
       {showFab && (
-        <button className="fab" onClick={() => setSheet("buy")}>
-          <MIcon name="plus" size={22} />
-        </button>
+        <>
+          {/* Scan FAB — floats 66px above the main FAB */}
+          <button
+            className="fab"
+            style={{
+              width: 46, height: 46, borderRadius: 14,
+              background: "var(--paper)", border: "1.5px solid var(--line)", color: "var(--ink)",
+              bottom: "calc(max(72px, env(safe-area-inset-bottom, 0px) + 72px) + 66px)",
+            }}
+            onClick={() => setSheet("scan")}
+            title="Scan invoice"
+          >
+            <MIcon name="scan" size={19} />
+          </button>
+          {/* Main FAB — Add holding */}
+          <button className="fab" onClick={() => setSheet("buy")}>
+            <MIcon name="plus" size={22} />
+          </button>
+        </>
       )}
 
       {/* Bottom Tab Bar */}
@@ -214,6 +230,14 @@ function MobileApp({ data, afterAction, onLogout, onRefresh }) {
       )}
       {sheet === "ask" && (
         <MAskSheet onClose={() => setSheet(null)} data={data} />
+      )}
+      {sheet === "scan" && (
+        <MOCRSheet
+          data={data}
+          onClose={() => setSheet(null)}
+          onBuy={(args) => { handleBuy(args); setSheet(null); }}
+          onSell={(args) => { handleSell(args); setSheet(null); }}
+        />
       )}
 
       {/* Toast */}

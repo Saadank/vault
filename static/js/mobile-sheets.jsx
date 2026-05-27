@@ -480,4 +480,344 @@ const MSellSheet = ({ holding, onClose, onSubmit }) => {
   );
 };
 
+// ─────────────────────────────────────────────────────────────
+// SCAN INVOICE — OCR import from Tadawul broker screenshot
+// ─────────────────────────────────────────────────────────────
+const MOCRSheet = ({ data, onClose, onBuy, onSell }) => {
+  const [step,     setStep]     = useState("upload"); // upload | scanning | review | error
+  const [imgUrl,   setImgUrl]   = useState(null);
+  const [errMsg,   setErrMsg]   = useState("");
+  const [action,   setAction]   = useState("BUY");
+  const [ticker,   setTicker]   = useState("");
+  const [name,     setName]     = useState("");
+  const [qty,      setQty]      = useState("");
+  const [price,    setPrice]    = useState("");
+  const [currency, setCurrency] = useState("USD");
+  const [date,     setDate]     = useState(new Date().toISOString().slice(0, 10));
+  const [assetType,setAssetType]= useState("Stock");
+
+  const fileRef = React.useRef(null);
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    setImgUrl(URL.createObjectURL(file));
+    setStep("scanning");
+
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const r = await fetch("/api/ocr/parse-invoice", {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        throw new Error(e.detail || `Server error (${r.status})`);
+      }
+      const d = await r.json();
+      setAction(d.action  || "BUY");
+      setTicker(d.ticker  || "");
+      setName(d.name      || "");
+      setQty(d.quantity != null  ? String(d.quantity) : "");
+      setPrice(d.price   != null ? String(d.price)    : "");
+      setCurrency(d.currency || "USD");
+      if (d.date) setDate(d.date);
+      setStep("review");
+    } catch (e) {
+      setErrMsg(e.message);
+      setStep("error");
+    }
+  };
+
+  const handleConfirm = () => {
+    const qtyN   = parseFloat(qty);
+    const priceN = parseFloat(price);
+    if (!qtyN || !priceN || !name) return;
+
+    const fx          = CURRENCY_RATES[currency] || 1;
+    const priceInSAR  = priceN * fx;
+    const ccyNote     = currency !== "SAR" ? `${currency} ${priceN} × ${fx}` : null;
+
+    if (action === "BUY") {
+      onBuy && onBuy({
+        name,
+        ticker: ticker || null,
+        asset_type: assetType,
+        qty: qtyN,
+        price: priceInSAR,
+        purchase_date: date,
+        notes: ccyNote,
+      });
+    } else {
+      const holding = data?.holdings?.find(
+        h => h.ticker === ticker
+          || (ticker && h.name?.toLowerCase().includes(ticker.toLowerCase()))
+      );
+      if (!holding) {
+        setErrMsg(`${ticker || name} not found in your portfolio — add it first as a buy.`);
+        setStep("error");
+        return;
+      }
+      onSell && onSell({ holding, qty: String(qtyN), price: String(priceInSAR) });
+    }
+    onClose();
+  };
+
+  const qtyN   = parseFloat(qty)   || 0;
+  const priceN = parseFloat(price) || 0;
+  const fx     = CURRENCY_RATES[currency] || 1;
+  const sarTotal = qtyN * priceN * fx;
+  const canConfirm = qtyN > 0 && priceN > 0 && name.trim().length > 0;
+
+  return (
+    <MSheet onClose={onClose} height={step === "review" ? "92%" : "auto"}>
+      {/* Header */}
+      <div style={{ padding: "8px 18px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 9, background: "var(--accent-soft)", color: "var(--accent-ink)", display: "grid", placeItems: "center" }}>
+          <MIcon name="scan" size={16} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div className="serif" style={{ fontSize: 20, lineHeight: 1 }}>Scan Invoice</div>
+          <div className="ticker" style={{ marginTop: 2 }}>Import from Tadawul broker app</div>
+        </div>
+        <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, display: "grid", placeItems: "center", color: "var(--ink-2)" }}>
+          <MIcon name="close" size={16} />
+        </button>
+      </div>
+      <div className="hairline" />
+
+      {/* ── Upload ────────────────────────────────────────────────── */}
+      {step === "upload" && (
+        <div style={{ padding: "24px 18px 36px" }}>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            style={{ display: "none" }}
+            onChange={e => handleFile(e.target.files?.[0])}
+          />
+          <div
+            onClick={() => fileRef.current?.click()}
+            style={{
+              border: "1.5px dashed var(--line)",
+              borderRadius: 16,
+              padding: "40px 24px",
+              textAlign: "center",
+              cursor: "pointer",
+              background: "var(--paper-2)",
+              WebkitTapHighlightColor: "transparent",
+            }}
+          >
+            <div style={{
+              width: 60, height: 60, borderRadius: 18,
+              background: "var(--accent-soft)", color: "var(--accent-ink)",
+              display: "grid", placeItems: "center", margin: "0 auto 16px",
+            }}>
+              <MIcon name="camera" size={30} />
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
+              Take or upload photo
+            </div>
+            <div className="ticker">
+              Screenshot from Aljazira, Mubasher, Frqan, or any Tadawul broker
+            </div>
+          </div>
+          <div style={{ marginTop: 12, padding: "12px 14px", borderRadius: 10, background: "var(--accent-soft)", fontSize: 12, color: "var(--accent-ink)", display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <MIcon name="info" size={13} style={{ marginTop: 1, flexShrink: 0 }} />
+            <span>OCR runs locally on the server — no data is sent to any external API.</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Scanning ──────────────────────────────────────────────── */}
+      {step === "scanning" && (
+        <div style={{ padding: "32px 18px 40px", textAlign: "center" }}>
+          {imgUrl && (
+            <img
+              src={imgUrl}
+              style={{ width: "100%", maxHeight: 180, objectFit: "contain", borderRadius: 12, marginBottom: 24 }}
+              alt="invoice preview"
+            />
+          )}
+          <div className="dots dim" style={{ marginBottom: 14 }}>
+            <span/><span/><span/>
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 500 }}>Reading invoice…</div>
+          <div className="ticker" style={{ marginTop: 4 }}>
+            Extracting details with OCR
+          </div>
+        </div>
+      )}
+
+      {/* ── Error ─────────────────────────────────────────────────── */}
+      {step === "error" && (
+        <div style={{ padding: "24px 18px 36px" }}>
+          <div style={{
+            color: "var(--loss)", fontSize: 13, marginBottom: 16,
+            padding: 14, background: "rgba(220,50,50,0.07)", borderRadius: 10,
+          }}>
+            {errMsg}
+          </div>
+          <button className="m-btn full" onClick={() => setStep("upload")}>Try again</button>
+        </div>
+      )}
+
+      {/* ── Review ────────────────────────────────────────────────── */}
+      {step === "review" && (
+        <div style={{ padding: "16px 18px 36px", overflowY: "auto", flex: 1 }}>
+
+          {/* Action toggle */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+            {["BUY", "SELL"].map(a => (
+              <button
+                key={a}
+                onClick={() => setAction(a)}
+                style={{
+                  flex: 1, padding: "11px 0", borderRadius: 10,
+                  border: "none", cursor: "pointer",
+                  fontWeight: 600, fontSize: 13,
+                  background: action === a
+                    ? (a === "BUY" ? "var(--gain)" : "var(--loss)")
+                    : "var(--paper-2)",
+                  color: action === a ? "#fff" : "var(--ink-2)",
+                  transition: "background 0.15s",
+                }}
+              >
+                {a === "BUY" ? "Buy" : "Sell"}
+              </button>
+            ))}
+          </div>
+
+          {/* Fields */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 5 }}>Ticker</div>
+                <input
+                  className="m-input"
+                  value={ticker}
+                  onChange={e => setTicker(e.target.value.toUpperCase())}
+                  placeholder="TSLA"
+                />
+              </div>
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 5 }}>Type</div>
+                <select
+                  className="m-input"
+                  value={assetType}
+                  onChange={e => setAssetType(e.target.value)}
+                  style={{ appearance: "none" }}
+                >
+                  {["Stock", "ETF", "Fund", "Crypto", "Bond"].map(t => (
+                    <option key={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <div className="eyebrow" style={{ marginBottom: 5 }}>Name</div>
+              <input
+                className="m-input"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="Tesla, Inc"
+              />
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 5 }}>Quantity</div>
+                <input
+                  className="m-input"
+                  value={qty}
+                  onChange={e => setQty(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 5 }}>Price ({currency})</div>
+                <input
+                  className="m-input"
+                  value={price}
+                  onChange={e => setPrice(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="0.00"
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 5 }}>Currency</div>
+                <select
+                  className="m-input"
+                  value={currency}
+                  onChange={e => setCurrency(e.target.value)}
+                  style={{ appearance: "none" }}
+                >
+                  {["SAR", "USD", "GBP", "EUR", "KWD"].map(c => (
+                    <option key={c}>{c}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 5 }}>Date</div>
+                <input
+                  className="m-input"
+                  type="date"
+                  value={date}
+                  onChange={e => setDate(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Summary bar */}
+          {sarTotal > 0 && (
+            <div style={{
+              marginTop: 18, padding: "14px 16px", borderRadius: 12,
+              background: action === "BUY" ? "var(--accent-soft)" : "rgba(220,50,50,0.07)",
+              color: action === "BUY" ? "var(--accent-ink)" : "var(--loss)",
+            }}>
+              <div className="eyebrow" style={{ marginBottom: 4 }}>
+                {action === "BUY" ? "Total cost" : "Proceeds"} (SAR)
+              </div>
+              <div className="serif" style={{ fontSize: 30, fontVariantNumeric: "tabular-nums" }}>
+                {sarTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                <span style={{ fontSize: 13, marginLeft: 6, opacity: 0.7 }}>SAR</span>
+              </div>
+              {currency !== "SAR" && (
+                <div style={{ fontSize: 11, marginTop: 3, opacity: 0.7 }}>
+                  {currency} {priceN} × {qtyN} × {fx} rate
+                </div>
+              )}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+            <button onClick={onClose} className="m-btn" style={{ flex: 1 }}>
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirm}
+              disabled={!canConfirm}
+              className="m-btn primary"
+              style={{
+                flex: 2,
+                opacity: canConfirm ? 1 : 0.45,
+                background: action === "SELL" ? "var(--loss)" : undefined,
+              }}
+            >
+              Confirm {action === "BUY" ? "purchase" : "sale"}
+            </button>
+          </div>
+        </div>
+      )}
+    </MSheet>
+  );
+};
+
 Object.assign(window, { MSheet, MBuySheet, MDepositSheet, MAskSheet, MSellSheet });

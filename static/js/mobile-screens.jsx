@@ -161,7 +161,7 @@ const MLogin = ({ onLogin }) => {
 // ─────────────────────────────────────────────────────────────
 // DASHBOARD
 // ─────────────────────────────────────────────────────────────
-const MDashboard = ({ data, tweaks, navigate, openHolding, openBuy, openDeposit, openAsk, route }) => {
+const MDashboard = ({ data, tweaks, navigate, openHolding, openBuy, openDeposit, openWithdraw, openAsk, route }) => {
   const { summary, holdings, chart } = data;
   const [range, setRange] = useState("1M");
   const hidden = !!tweaks.privacy;
@@ -244,7 +244,7 @@ const MDashboard = ({ data, tweaks, navigate, openHolding, openBuy, openDeposit,
           {[
             { icon: "arrowDownLeft", label: "Deposit", onClick: openDeposit },
             { icon: "plus", label: "Buy", onClick: openBuy, gold: true },
-            { icon: "arrowUpRight", label: "Withdraw", onClick: openDeposit },
+            { icon: "arrowUpRight", label: "Withdraw", onClick: openWithdraw },
             { icon: "sparkle", label: "Ask Vault", onClick: openAsk },
           ].map(a => (
             <button key={a.label} onClick={a.onClick} style={{
@@ -310,7 +310,7 @@ const MDashboard = ({ data, tweaks, navigate, openHolding, openBuy, openDeposit,
               <button onClick={openDeposit} className="m-btn gold" style={{ flex: 1, padding: "10px", minHeight: 40, fontSize: 13 }}>
                 <MIcon name="arrowDownLeft" size={14} /> Deposit
               </button>
-              <button className="m-btn" style={{ flex: 1, background: "transparent", border: "1px solid #3a3322", color: "#f5efe0", padding: "10px", minHeight: 40, fontSize: 13 }}>
+              <button onClick={openWithdraw} className="m-btn" style={{ flex: 1, background: "transparent", border: "1px solid #3a3322", color: "#f5efe0", padding: "10px", minHeight: 40, fontSize: 13 }}>
                 <MIcon name="arrowUpRight" size={14} /> Withdraw
               </button>
             </div>
@@ -419,7 +419,7 @@ const MDashboard = ({ data, tweaks, navigate, openHolding, openBuy, openDeposit,
 // ─────────────────────────────────────────────────────────────
 // HOLDING DETAIL
 // ─────────────────────────────────────────────────────────────
-const MHoldingDetail = ({ data, tweaks, holding, onBack, openSell }) => {
+const MHoldingDetail = ({ data, tweaks, holding, onBack, openSell, openBuy }) => {
   const h = holding;
   const hidden = !!tweaks.privacy;
   const [range, setRange] = useState("1M");
@@ -573,7 +573,7 @@ const MHoldingDetail = ({ data, tweaks, holding, onBack, openSell }) => {
         <button className="m-btn" style={{ flex: 1 }} onClick={openSell}>
           <MIcon name="arrowUpRight" size={15} /> Sell
         </button>
-        <button className="m-btn gold" style={{ flex: 1.5 }}>
+        <button className="m-btn gold" style={{ flex: 1.5 }} onClick={openBuy}>
           <MIcon name="plus" size={15} /> Buy more
         </button>
       </div>

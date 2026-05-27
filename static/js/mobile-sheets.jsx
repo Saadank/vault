@@ -12,32 +12,95 @@ const MSheet = ({ onClose, children, height = "auto" }) => (
 // ─────────────────────────────────────────────────────────────
 // BUY / ADD HOLDING
 // ─────────────────────────────────────────────────────────────
+const CURRENCY_RATES = { SAR: 1, USD: 3.75, GBP: 4.73, EUR: 4.08, KWD: 12.19, AED: 1.02 };
+
+const M_SEED_LIST = [
+  { symbol: "2222.SR", name: "Saudi Aramco",         exchange: "Tadawul", type: "Stock",  currency: "SAR" },
+  { symbol: "1120.SR", name: "Al Rajhi Bank",        exchange: "Tadawul", type: "Stock",  currency: "SAR" },
+  { symbol: "2010.SR", name: "SABIC",                exchange: "Tadawul", type: "Stock",  currency: "SAR" },
+  { symbol: "7010.SR", name: "stc Group",            exchange: "Tadawul", type: "Stock",  currency: "SAR" },
+  { symbol: "2280.SR", name: "Almarai",              exchange: "Tadawul", type: "Stock",  currency: "SAR" },
+  { symbol: "1211.SR", name: "Ma'aden",              exchange: "Tadawul", type: "Stock",  currency: "SAR" },
+  { symbol: "AAPL",    name: "Apple Inc.",           exchange: "NASDAQ",  type: "Stock",  currency: "USD" },
+  { symbol: "NVDA",    name: "NVIDIA Corporation",   exchange: "NASDAQ",  type: "Stock",  currency: "USD" },
+  { symbol: "VOO",     name: "Vanguard S&P 500 ETF", exchange: "NYSE",    type: "ETF",    currency: "USD" },
+  { symbol: "BTC-USD", name: "Bitcoin",              exchange: "Crypto",  type: "Crypto", currency: "USD" },
+];
+
 const MBuySheet = ({ data, onClose, onSubmit, prefill }) => {
-  const [step, setStep] = useState("search"); // search | form
+  const [step, setStep] = useState(prefill ? "form" : "search");
   const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
   const [picked, setPicked] = useState(prefill || null);
-  const [qty, setQty] = useState("100");
-  const [price, setPrice] = useState(picked ? String(picked.current_price) : "");
+  const [currency, setCurrency] = useState(prefill?.currency || "SAR");
+  const [qty, setQty] = useState("");
+  const [price, setPrice] = useState(prefill ? String(prefill.current_price || "") : "");
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState("");
+  const [fetchingQuote, setFetchingQuote] = useState(false);
   const [type, setType] = useState("Stock");
 
+  // Debounced search — same API as desktop
+  const searchRef = React.useRef(null);
   React.useEffect(() => {
-    if (prefill) { setPicked(prefill); setStep("form"); setPrice(String(prefill.current_price)); }
-  }, [prefill]);
+    if (!query) { setResults([]); return; }
+    clearTimeout(searchRef.current);
+    searchRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const r = await fetch(`/api/prices/search?q=${encodeURIComponent(query)}`, { credentials: "include" });
+        if (r.ok) {
+          const d = await r.json();
+          setResults(d.results || d || []);
+        }
+      } catch (_) {}
+      setSearching(false);
+    }, 350);
+  }, [query]);
 
-  const searchResults = [
-    { name: "Saudi Aramco", ticker: "2222.SR", type: "Stock", price: 30.85 },
-    { name: "Al Rajhi Bank", ticker: "1120.SR", type: "Stock", price: 92.20 },
-    { name: "SABIC", ticker: "2010.SR", type: "Stock", price: 78.10 },
-    { name: "stc Group", ticker: "7010.SR", type: "Stock", price: 41.50 },
-    { name: "Almarai", ticker: "2280.SR", type: "Stock", price: 54.80 },
-    { name: "Ma'aden", ticker: "1211.SR", type: "Stock", price: 52.25 },
-    { name: "Apple", ticker: "AAPL", type: "Stock", price: 712.5 },
-    { name: "NVIDIA", ticker: "NVDA", type: "Stock", price: 482.10 },
-    { name: "Vanguard S&P 500", ticker: "VOO", type: "ETF", price: 2024.6 },
-    { name: "Bitcoin", ticker: "BTC-USD", type: "Crypto", price: 256800 },
-  ].filter(r => !query || r.name.toLowerCase().includes(query.toLowerCase()) || r.ticker.toLowerCase().includes(query.toLowerCase()));
+  const displayList = query ? results : M_SEED_LIST.filter(r => r.type === type);
 
-  const total = (parseFloat(qty) || 0) * (parseFloat(price) || 0);
+  // Pick a result — fetch live quote then go to form
+  const pick = async (r) => {
+    const detectedCcy = r.currency || (r.symbol?.endsWith(".SR") ? "SAR" : "USD");
+    setPicked({ name: r.name, ticker: r.symbol, asset_type: r.type || type, currency: detectedCcy, current_price: null });
+    setCurrency(detectedCcy);
+    setPrice("");
+    setStep("form");
+    setFetchingQuote(true);
+    try {
+      const q = await fetch(`/api/prices/quote?symbol=${encodeURIComponent(r.symbol)}`, { credentials: "include" });
+      if (q.ok) {
+        const d = await q.json();
+        if (d.price != null) setPrice(String(d.price));
+        if (d.currency) setCurrency(d.currency);
+        setPicked(prev => ({ ...prev, current_price: d.price, currency: d.currency || detectedCcy }));
+      }
+    } catch (_) {}
+    setFetchingQuote(false);
+  };
+
+  const fx = CURRENCY_RATES[currency] || 1;
+  const priceN = parseFloat(price) || 0;
+  const qtyN = parseFloat(qty) || 0;
+  const sarPrice = priceN * fx;
+  const total = qtyN * sarPrice;
+
+  const handleConfirm = () => {
+    if (!picked || !qtyN || !priceN) return;
+    const ccyNote = currency !== "SAR"
+      ? `Entered as ${currency} ${priceN} (rate ${fx})${notes ? " — " + notes : ""}`
+      : notes || null;
+    onSubmit && onSubmit({
+      ...picked,
+      qty: qtyN,
+      price: sarPrice,
+      purchase_date: date,
+      notes: ccyNote,
+    });
+    onClose();
+  };
 
   return (
     <MSheet onClose={onClose} height={step === "search" ? "80%" : "auto"}>
@@ -47,7 +110,7 @@ const MBuySheet = ({ data, onClose, onSubmit, prefill }) => {
             <MIcon name="chevLeft" size={15} />
           </button>
         )}
-        <div className="serif" style={{ fontSize: 24, flex: 1 }}>{step === "search" ? "Add holding" : `Buy ${picked.name}`}</div>
+        <div className="serif" style={{ fontSize: 24, flex: 1 }}>{step === "search" ? "Add holding" : `Buy ${picked?.name || "…"}`}</div>
         <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, display: "grid", placeItems: "center", color: "var(--ink-2)" }}>
           <MIcon name="close" size={16} />
         </button>
@@ -55,7 +118,7 @@ const MBuySheet = ({ data, onClose, onSubmit, prefill }) => {
 
       {step === "search" && (
         <div style={{ padding: "0 18px 24px", flex: 1, overflow: "auto" }}>
-          {/* Asset-type pills */}
+          {/* Asset-type pills — used to browse seed list; ignored during active search */}
           <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto" }}>
             {["Stock", "ETF", "Crypto", "Bond", "Real Estate"].map(t => (
               <button key={t} className={"m-pill " + (type === t ? "on" : "")} onClick={() => setType(t)} style={{ flexShrink: 0 }}>
@@ -63,9 +126,10 @@ const MBuySheet = ({ data, onClose, onSubmit, prefill }) => {
               </button>
             ))}
           </div>
-          {/* Search */}
+          {/* Search input */}
           <div style={{ position: "relative" }}>
             <MIcon name="search" size={16} style={{ position: "absolute", left: 14, top: 16, color: "var(--ink-3)" }} />
+            {searching && <span className="dots dim" style={{ position: "absolute", right: 14, top: 18 }}><span/><span/><span/></span>}
             <input
               className="m-input"
               style={{ paddingLeft: 40 }}
@@ -76,10 +140,14 @@ const MBuySheet = ({ data, onClose, onSubmit, prefill }) => {
             />
           </div>
           {/* Results */}
-          <div className="eyebrow" style={{ marginTop: 16, marginBottom: 8 }}>Top matches</div>
+          {displayList.length > 0 && (
+            <div className="eyebrow" style={{ marginTop: 16, marginBottom: 8 }}>
+              {query ? "Top matches" : "Popular"}
+            </div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {searchResults.slice(0, 6).map((r, i) => (
-              <button key={i} onClick={() => { setPicked({ ...r, current_price: r.price, asset_type: r.type, currency: r.ticker.endsWith(".SR") ? "SAR" : (r.type === "Crypto" ? "SAR" : "USD") }); setPrice(String(r.price)); setStep("form"); }} style={{
+            {displayList.slice(0, 8).map((r, i) => (
+              <button key={i} onClick={() => pick(r)} style={{
                 display: "flex", alignItems: "center", gap: 12,
                 padding: "12px 12px", borderRadius: 10, textAlign: "left",
                 border: "1px solid var(--line)", background: "var(--paper)",
@@ -87,14 +155,17 @@ const MBuySheet = ({ data, onClose, onSubmit, prefill }) => {
                 <div style={{ width: 36, height: 36, borderRadius: 9, background: "var(--paper-2)", display: "grid", placeItems: "center", fontFamily: "Instrument Serif", fontSize: 16 }}>{r.name[0]}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 500 }}>{r.name}</div>
-                  <div className="ticker" style={{ marginTop: 1 }}>{r.ticker} · {r.type}</div>
+                  <div className="ticker" style={{ marginTop: 1 }}>{r.symbol} · {r.exchange || r.type}</div>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 13, fontVariantNumeric: "tabular-nums" }}>{r.price.toLocaleString()}</div>
-                  <div className="ticker">{r.ticker.endsWith(".SR") ? "SAR" : (r.type === "Crypto" ? "SAR" : "USD")}</div>
-                </div>
+                <div className="ticker">{r.currency || (r.symbol?.endsWith(".SR") ? "SAR" : "USD")}</div>
               </button>
             ))}
+            {query && !searching && displayList.length === 0 && (
+              <div style={{ padding: "24px 0", textAlign: "center", color: "var(--ink-3)", fontSize: 13 }}>
+                <MIcon name="search" size={20} style={{ display: "block", margin: "0 auto 8px" }} />
+                No matches for "{query}"
+              </div>
+            )}
           </div>
           <button style={{ width: "100%", marginTop: 14, padding: 12, color: "var(--ink-2)", fontSize: 13, border: "1px dashed var(--line)", borderRadius: 10, background: "transparent" }}>
             <MIcon name="plus" size={13} style={{ verticalAlign: "middle", marginRight: 6 }} /> Add custom asset (real estate, private)
@@ -112,7 +183,13 @@ const MBuySheet = ({ data, onClose, onSubmit, prefill }) => {
             <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--paper)", display: "grid", placeItems: "center", fontFamily: "Instrument Serif", fontSize: 18 }}>{picked.name[0]}</div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 500 }}>{picked.name}</div>
-              <div className="ticker">{picked.ticker} · last {picked.current_price} {picked.currency || "SAR"}</div>
+              <div className="ticker">
+                {picked.ticker}
+                {fetchingQuote
+                  ? <span className="dots dim" style={{ marginLeft: 6 }}><span/><span/><span/></span>
+                  : picked.current_price != null ? ` · ${picked.current_price} ${currency}` : " · enter price below"
+                }
+              </div>
             </div>
             <MTypeChip type={picked.asset_type} small />
           </div>
@@ -120,22 +197,22 @@ const MBuySheet = ({ data, onClose, onSubmit, prefill }) => {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
             <div>
               <div className="eyebrow" style={{ marginBottom: 6 }}>Quantity</div>
-              <input className="m-input" value={qty} onChange={e => setQty(e.target.value)} inputMode="decimal" />
+              <input className="m-input" value={qty} onChange={e => setQty(e.target.value)} inputMode="decimal" placeholder="0" />
             </div>
             <div>
-              <div className="eyebrow" style={{ marginBottom: 6 }}>Price / unit</div>
-              <input className="m-input" value={price} onChange={e => setPrice(e.target.value)} inputMode="decimal" />
+              <div className="eyebrow" style={{ marginBottom: 6 }}>Price ({currency})</div>
+              <input className="m-input" value={price} onChange={e => setPrice(e.target.value)} inputMode="decimal" placeholder={fetchingQuote ? "loading…" : "0.00"} />
             </div>
           </div>
 
           <div>
             <div className="eyebrow" style={{ marginBottom: 6, marginTop: 12 }}>Purchase date</div>
-            <input className="m-input" value="2026-05-21" readOnly />
+            <input className="m-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
           </div>
 
           <div>
             <div className="eyebrow" style={{ marginBottom: 6, marginTop: 12 }}>Notes <span style={{ color: "var(--ink-3)" }}>(optional)</span></div>
-            <input className="m-input" placeholder="e.g. dividend anchor, long-term hold" />
+            <input className="m-input" placeholder="e.g. dividend anchor, long-term hold" value={notes} onChange={e => setNotes(e.target.value)} />
           </div>
 
           {/* Summary */}
@@ -144,12 +221,12 @@ const MBuySheet = ({ data, onClose, onSubmit, prefill }) => {
             background: "var(--ink)", color: "#f5efe0",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <span className="eyebrow" style={{ color: "var(--accent-2)" }}>Total cost</span>
-              <span style={{ fontSize: 11, color: "#a89e85" }}>{qty} × {price}</span>
+              <span className="eyebrow" style={{ color: "var(--accent-2)" }}>Total cost (SAR)</span>
+              <span style={{ fontSize: 11, color: "#a89e85" }}>{qty || "0"} × {price || "0"}{currency !== "SAR" ? ` ${currency} × ${fx}` : ""}</span>
             </div>
             <div className="serif" style={{ fontSize: 32, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>
               {total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-              <span style={{ fontSize: 14, color: "#a89e85", marginLeft: 6 }}>{picked.currency || "SAR"}</span>
+              <span style={{ fontSize: 14, color: "#a89e85", marginLeft: 6 }}>SAR</span>
             </div>
             <div style={{ fontSize: 11, color: "#a89e85", marginTop: 4 }}>
               Deducts from cash wallet · {F.SAR(data?.summary?.cash_balance || 0, 2)} SAR available
@@ -158,7 +235,7 @@ const MBuySheet = ({ data, onClose, onSubmit, prefill }) => {
 
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
             <button onClick={onClose} className="m-btn" style={{ flex: 1 }}>Cancel</button>
-            <button onClick={() => { onSubmit && onSubmit({ ...picked, qty, price, total }); onClose(); }} className="m-btn primary" style={{ flex: 2 }}>
+            <button onClick={handleConfirm} disabled={!qtyN || !priceN} className="m-btn primary" style={{ flex: 2, opacity: (!qtyN || !priceN) ? 0.5 : 1 }}>
               Confirm purchase
             </button>
           </div>

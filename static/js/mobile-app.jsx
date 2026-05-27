@@ -114,6 +114,7 @@ function MobileApp({ data, afterAction, onLogout, onRefresh }) {
         holding={holding}
         onBack={() => navigate("dashboard")}
         openSell={() => setSheet("sell")}
+        openBuy={() => setSheet("buy-more")}
       />
     );
   } else if (route === "analytics") {
@@ -178,6 +179,14 @@ function MobileApp({ data, afterAction, onLogout, onRefresh }) {
       {sheet === "buy" && (
         <MBuySheet
           data={data}
+          onClose={() => setSheet(null)}
+          onSubmit={(args) => { handleBuy(args); setSheet(null); }}
+        />
+      )}
+      {sheet === "buy-more" && holding && (
+        <MBuySheet
+          data={data}
+          prefill={holding}
           onClose={() => setSheet(null)}
           onSubmit={(args) => { handleBuy(args); setSheet(null); }}
         />

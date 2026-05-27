@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "vault",
+      "runtimeExecutable": "uvicorn",
+      "runtimeArgs": ["main:app", "--port", "7001", "--reload"],
+      "port": 7001
+    }
+  ]
+}

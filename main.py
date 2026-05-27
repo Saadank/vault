@@ -12,6 +12,7 @@ Or in production:
 import asyncio
 import logging
 import os
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
@@ -21,6 +22,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+
+_MOBILE_UA = re.compile(r"Mobile|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini", re.I)
 
 # Ensure static directory exists (Railway/Docker may not have it)
 os.makedirs("static", exist_ok=True)
@@ -126,11 +129,21 @@ app.include_router(chat.router)
 app.include_router(analytics.router)
 
 
-# ── SPA shell — all page routes serve index.html ─────────────────────────────
-# Auth state and routing are handled client-side by the React app.
+# ── SPA shell ─────────────────────────────────────────────────────────────────
+# Mobile user-agents get mobile.html; everything else gets web.html.
+# Auth state and routing are handled client-side by each React root.
 
 def _spa(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    ua = request.headers.get("user-agent", "")
+    template = "mobile.html" if _MOBILE_UA.search(ua) else "web.html"
+    return templates.TemplateResponse(template, {"request": request})
+
+
+def _mobile(request: Request):
+    return templates.TemplateResponse("mobile.html", {"request": request})
+
+def _web(request: Request):
+    return templates.TemplateResponse("web.html", {"request": request})
 
 
 @app.get("/",             response_class=HTMLResponse)
@@ -150,6 +163,13 @@ async def analytics_page(request: Request): return _spa(request)
 
 @app.get("/transactions", response_class=HTMLResponse)
 async def transactions_page(request: Request): return _spa(request)
+
+# ── Force-preview routes (bypass UA detection) ────────────────────────────────
+@app.get("/mobile",       response_class=HTMLResponse)
+async def mobile_preview(request: Request): return _mobile(request)
+
+@app.get("/web",          response_class=HTMLResponse)
+async def web_preview(request: Request):    return _web(request)
 
 # ── PWA files — must be served from root scope ────────────────────────────────
 @app.get("/sw.js")

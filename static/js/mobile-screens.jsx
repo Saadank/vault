@@ -164,7 +164,20 @@ const MLogin = ({ onLogin }) => {
 const MDashboard = ({ data, tweaks, navigate, openHolding, openBuy, openDeposit, openWithdraw, openAsk, route }) => {
   const { summary, holdings, chart } = data;
   const [range, setRange] = useState("1M");
+  const [sortBy, setSortBy] = useState("value");
   const hidden = !!tweaks.privacy;
+
+  const SORTS = {
+    value: { label: "By value", fn: (a, b) => b.market_value_sar - a.market_value_sar },
+    gain:  { label: "By gain",  fn: (a, b) => b.unrealized_pct - a.unrealized_pct },
+    name:  { label: "By name",  fn: (a, b) => a.name.localeCompare(b.name) },
+  };
+  const SORT_ORDER = ["value", "gain", "name"];
+  const cycleSort = () => setSortBy(s => SORT_ORDER[(SORT_ORDER.indexOf(s) + 1) % SORT_ORDER.length]);
+  const sortedHoldings = useMemo(
+    () => [...holdings].sort(SORTS[sortBy].fn),
+    [holdings, sortBy]
+  );
 
   const filteredChart = useMemo(() => {
     const n = chart.length;
@@ -320,13 +333,13 @@ const MDashboard = ({ data, tweaks, navigate, openHolding, openBuy, openDeposit,
         {/* Holdings — list with swipe affordance */}
         <div style={{ padding: "0 20px 6px", display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
           <h3 className="serif" style={{ fontSize: 22 }}>Holdings</h3>
-          <button style={{ fontSize: 12, color: "var(--ink-2)", display: "inline-flex", alignItems: "center", gap: 4 }}>
-            By value <MIcon name="chevDown" size={12} />
+          <button onClick={cycleSort} style={{ fontSize: 12, color: "var(--ink-2)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+            {SORTS[sortBy].label} <MIcon name="chevDown" size={12} />
           </button>
         </div>
 
         <div style={{ padding: "0 20px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
-          {holdings.map(h => {
+          {sortedHoldings.map(h => {
             const up = h.unrealized_pct >= 0;
             // Small synthetic spark
             const seed = h.id;

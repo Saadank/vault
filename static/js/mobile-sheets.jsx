@@ -205,9 +205,17 @@ const MBuySheet = ({ data, onClose, onSubmit, prefill }) => {
             </div>
           </div>
 
-          <div>
-            <div className="eyebrow" style={{ marginBottom: 6, marginTop: 12 }}>Purchase date</div>
-            <input className="m-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+            <div>
+              <div className="eyebrow" style={{ marginBottom: 6 }}>Currency</div>
+              <select className="m-input" value={currency} onChange={e => setCurrency(e.target.value)} style={{ appearance: "none" }}>
+                {Object.keys(CURRENCY_RATES).map(c => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <div className="eyebrow" style={{ marginBottom: 6 }}>Purchase date</div>
+              <input className="m-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+            </div>
           </div>
 
           <div>
@@ -418,8 +426,13 @@ const MSellSheet = ({ holding, onClose, onSubmit }) => {
   const h = holding;
   const [qty, setQty] = useState(String(Math.floor(h.quantity * 0.5)));
   const [price, setPrice] = useState(String(h.current_price));
-  const total = (parseFloat(qty) || 0) * (parseFloat(price) || 0);
-  const realized = total - (parseFloat(qty) || 0) * h.avg_cost;
+  const [currency, setCurrency] = useState(h.currency || "SAR");
+  const fx = CURRENCY_RATES[currency] || 1;
+  const qtyN = parseFloat(qty) || 0;
+  const priceN = parseFloat(price) || 0;
+  const sarPrice = priceN * fx;          // proceeds always settle in SAR (portfolio base)
+  const total = qtyN * sarPrice;
+  const realized = total - qtyN * h.avg_cost;
 
   return (
     <MSheet onClose={onClose}>
@@ -444,9 +457,16 @@ const MSellSheet = ({ holding, onClose, onSubmit }) => {
             <input className="m-input" value={qty} onChange={e => setQty(e.target.value)} inputMode="decimal" />
           </div>
           <div>
-            <div className="eyebrow" style={{ marginBottom: 6 }}>Sell price</div>
+            <div className="eyebrow" style={{ marginBottom: 6 }}>Sell price ({currency})</div>
             <input className="m-input" value={price} onChange={e => setPrice(e.target.value)} inputMode="decimal" />
           </div>
+        </div>
+
+        <div style={{ marginTop: 10 }}>
+          <div className="eyebrow" style={{ marginBottom: 6 }}>Currency</div>
+          <select className="m-input" value={currency} onChange={e => setCurrency(e.target.value)} style={{ appearance: "none" }}>
+            {Object.keys(CURRENCY_RATES).map(c => <option key={c}>{c}</option>)}
+          </select>
         </div>
 
         {/* % slider chips */}
@@ -463,16 +483,16 @@ const MSellSheet = ({ holding, onClose, onSubmit }) => {
           background: "var(--paper-2)", border: "1px solid var(--line-2)",
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5 }}>
-            <span style={{ color: "var(--ink-2)" }}>Total proceeds</span>
-            <span style={{ fontWeight: 500, fontVariantNumeric: "tabular-nums" }}>{total.toLocaleString(undefined, { maximumFractionDigits: 2 })} {h.currency}</span>
+            <span style={{ color: "var(--ink-2)" }}>Total proceeds (SAR){currency !== "SAR" ? ` · ${priceN} ${currency} × ${fx}` : ""}</span>
+            <span style={{ fontWeight: 500, fontVariantNumeric: "tabular-nums" }}>{total.toLocaleString(undefined, { maximumFractionDigits: 2 })} SAR</span>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginTop: 6 }}>
             <span style={{ color: "var(--ink-2)" }}>Realized P&L</span>
-            <MDelta value={realized} suffix={" " + h.currency} small />
+            <MDelta value={realized} suffix=" SAR" small />
           </div>
         </div>
 
-        <button onClick={() => { onSubmit && onSubmit({ holding: h, qty, price, realized }); onClose(); }} className="m-btn primary full" style={{ marginTop: 16 }}>
+        <button onClick={() => { onSubmit && onSubmit({ holding: h, qty, price: sarPrice, realized }); onClose(); }} className="m-btn primary full" style={{ marginTop: 16 }}>
           Confirm sale
         </button>
       </div>

@@ -13,7 +13,7 @@ import io
 import logging
 import os
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import resend
@@ -43,7 +43,54 @@ from app.database import (
     User,
 )
 
+from app.trading_calendar import classify_market, is_trading_day
+
 logger = logging.getLogger(__name__)
+
+
+# ── Daily movers (pure, testable) ─────────────────────────────────────────────
+def compute_daily_movers(report_date, holdings, prev_close_by_name):
+    """Build the "Today's Movers" rows for ``report_date``.
+
+    Parameters
+    ----------
+    report_date : datetime.date
+        The trading date the report is generated for.
+    holdings : iterable
+        Live holdings; each must expose ``name``, ``ticker``, ``asset_type``,
+        ``quantity`` and ``current_price``.
+    prev_close_by_name : dict[str, float]
+        Map of holding name → the official close on the most recent *trading*
+        day strictly before ``report_date`` (i.e. the stored prior close — never
+        a live "previous close" quote re-fetched at run time).
+
+    Rules
+    -----
+    * ``prev_price`` is the stored prior-trading-day close (the baseline).
+    * ``curr_price`` is the holding's current price (same source as the
+      position table).
+    * A holding is **included only if its market actually traded on
+      ``report_date``**. Closed-market assets (e.g. Tadawul on a Friday) are
+      excluded entirely — they contribute 0% / 0 impact.
+    """
+    movers = []
+    for h in holdings:
+        market = classify_market(getattr(h, "asset_type", None), getattr(h, "ticker", None))
+        if not is_trading_day(market, report_date):
+            continue  # market closed on report_date → 0% / excluded
+        prev = prev_close_by_name.get(h.name)
+        if not prev or prev <= 0:
+            continue
+        curr = h.current_price
+        movers.append({
+            "name": h.name,
+            "prev_price": prev,
+            "curr_price": curr,
+            "daily_pct": (curr - prev) / prev * 100,
+            "daily_sar": (curr - prev) * h.quantity,
+        })
+    movers.sort(key=lambda x: abs(x["daily_pct"]), reverse=True)
+    return movers
 
 # ── Design tokens ─────────────────────────────────────────────────────────────
 NAVY       = colors.HexColor("#0f172a")
@@ -129,31 +176,27 @@ async def _collect(db, user_id: int) -> dict:
         for t, v in sorted(type_map.items(), key=lambda x: x[1], reverse=True)
     ]
 
-    # Daily movers: yesterday's holding_snapshot vs current prices
-    yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-    ys_res = await db.execute(
-        select(HoldingSnapshot).where(
+    # Daily movers — baseline is the stored close on the most recent TRADING
+    # day strictly before today, NOT a re-fetched live "previous close".
+    # Closed-market assets are excluded by compute_daily_movers().
+    report_dt = date.today()
+    today_str = report_dt.strftime("%Y-%m-%d")
+    ps_res = await db.execute(
+        select(HoldingSnapshot)
+        .where(
             HoldingSnapshot.user_id == user_id,
-            HoldingSnapshot.snapshot_date == yesterday,
+            HoldingSnapshot.snapshot_date < today_str,
         )
+        .order_by(HoldingSnapshot.snapshot_date)
     )
-    ys_map = {r.name: r for r in ys_res.scalars().all()}
+    # Ascending date order → the last row written per name is its most recent
+    # prior close (this naturally carries the last close forward across gaps,
+    # weekends and holidays).
+    prev_close_by_name: dict[str, float] = {}
+    for r in ps_res.scalars().all():
+        prev_close_by_name[r.name] = r.current_price
 
-    daily_movers = []
-    for h in holdings:
-        if h.name in ys_map:
-            prev = ys_map[h.name].current_price
-            if prev and prev > 0:
-                d_pct = (h.current_price - prev) / prev * 100
-                d_sar = (h.current_price - prev) * h.quantity
-                daily_movers.append({
-                    "name": h.name,
-                    "prev_price": prev,
-                    "curr_price": h.current_price,
-                    "daily_pct": d_pct,
-                    "daily_sar": d_sar,
-                })
-    daily_movers.sort(key=lambda x: abs(x["daily_pct"]), reverse=True)
+    daily_movers = compute_daily_movers(report_dt, holdings, prev_close_by_name)
 
     # Portfolio snapshots (daily only) for performance metrics
     sp_res = await db.execute(

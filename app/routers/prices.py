@@ -239,20 +239,24 @@ async def _take_hourly_snapshot(db: AsyncSession, user_id: int):
 # ── Helper: take a daily holding-level snapshot ───────────────────────────────
 async def _take_holding_snapshot(db: AsyncSession, user_id: int):
     """
-    Record a daily snapshot of every open holding for historical allocation analysis.
-    Replaces today's entries so re-running (e.g. each hourly tick) stays idempotent.
+    Record a daily snapshot of every open holding for historical allocation
+    analysis and as the prior-close baseline for the daily report.
+
+    Last-write-wins: each hourly tick UPDATES today's row to the latest price,
+    so by end of day the snapshot holds that day's closing price. (The previous
+    first-write-wins behaviour froze the snapshot at the day's first overnight
+    tick, which made the report's "previous close" baseline wrong.)
     """
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
 
-    # Check if we already have today's entries — skip if present to avoid redundant DB writes
+    # Load today's existing rows so we can update them in place.
     existing = await db.execute(
         select(HoldingSnapshot).where(
             HoldingSnapshot.user_id == user_id,
             HoldingSnapshot.snapshot_date == today_str,
-        ).limit(1)
+        )
     )
-    if existing.scalar_one_or_none():
-        return  # already taken today
+    existing_by_name = {r.name: r for r in existing.scalars().all()}
 
     result = await db.execute(
         select(Holding).where(Holding.user_id == user_id, Holding.quantity > 0)
@@ -260,15 +264,23 @@ async def _take_holding_snapshot(db: AsyncSession, user_id: int):
     holdings = result.scalars().all()
 
     for h in holdings:
-        db.add(HoldingSnapshot(
-            user_id=user_id,
-            snapshot_date=today_str,
-            name=h.name,
-            asset_type=h.asset_type,
-            quantity=round(h.quantity, 6),
-            avg_cost=round(h.avg_cost, 4),
-            current_price=round(h.current_price, 4),
-        ))
+        row = existing_by_name.get(h.name)
+        if row is not None:
+            # Overwrite with the latest price → converges to today's close.
+            row.asset_type    = h.asset_type
+            row.quantity      = round(h.quantity, 6)
+            row.avg_cost      = round(h.avg_cost, 4)
+            row.current_price = round(h.current_price, 4)
+        else:
+            db.add(HoldingSnapshot(
+                user_id=user_id,
+                snapshot_date=today_str,
+                name=h.name,
+                asset_type=h.asset_type,
+                quantity=round(h.quantity, 6),
+                avg_cost=round(h.avg_cost, 4),
+                current_price=round(h.current_price, 4),
+            ))
 
     await db.commit()
 

@@ -126,7 +126,7 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
       </div>
 
       {/* Holdings table + Cash sidebar */}
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 320px", gap: 24 }}>
+      <div className="holdings-grid">
         {/* Holdings */}
         <div className="card" style={{ overflow: "hidden" }}>
           <div className="row between" style={{ padding: "18px 20px" }}>
@@ -157,8 +157,7 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
                     { label: "Qty",         col: "quantity",           cls: "num-cell right" },
                     { label: "Avg Cost",    col: "avg_cost",           cls: "num-cell right" },
                     { label: "Price",       col: "current_price",      cls: "num-cell right" },
-                    { label: "Value (SAR)", col: "market_value_sar",   cls: "num-cell right" },
-                    { label: "Value (USD)", col: "market_value_usd",   cls: "num-cell right" },
+                    { label: "Value",       col: "market_value_sar",   cls: "num-cell right" },
                     { label: "P&L",         col: "unrealized_pnl_sar", cls: "num-cell right" },
                     { label: "Return",      col: "unrealized_pct",     cls: "num-cell right" },
                   ].map(({ label, col, cls }) => (
@@ -173,7 +172,7 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
                       )}
                     </th>
                   ))}
-                  <th style={{ width: 64 }}></th>
+                  <th style={{ width: 0, padding: 0 }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -193,8 +192,10 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
                       <td className="num-cell right">{h.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
                       <td className="num-cell right dim">{h.avg_cost.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="mono" style={{ fontSize: 10 }}>{h.currency}</span></td>
                       <td className="num-cell right">{h.current_price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                      <td className="num-cell right" style={{ fontWeight: 500 }}>{fmt.SAR(h.market_value_sar, { decimals: 0 })}</td>
-                      <td className="num-cell right dim">${fmt.USD(h.market_value_usd)}</td>
+                      <td className="num-cell right">
+                        <div style={{ fontWeight: 500 }}>{fmt.SAR(h.market_value_sar, { decimals: 0 })} <span className="mono" style={{ fontSize: 10 }}>SAR</span></div>
+                        <div className="dim" style={{ fontSize: 11 }}>${fmt.USD(h.market_value_usd)}</div>
+                      </td>
                       <td className="num-cell right">
                         <span className={`delta ${up ? "up" : "down"}`}>
                           <span className="arrow">{up ? "▲" : "▼"}</span>
@@ -204,7 +205,7 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
                       <td className="num-cell right">
                         <Delta value={h.unrealized_pct} suffix="%" />
                       </td>
-                      <td>
+                      <td style={{ position: "relative", width: 0, padding: 0 }}>
                         <div className="row-actions" style={{ justifyContent: "flex-end" }}>
                           {h.asset_type === "Fund" && (
                             <button className="btn xs gold" onClick={() => openUpdatePrice(h)}>Update value</button>

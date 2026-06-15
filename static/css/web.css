@@ -82,25 +82,41 @@ html[data-nav="top"] .app { grid-template-columns: 1fr; }
   border-radius: 4px; background: var(--paper-2);
 }
 
+/* Holdings layout — table beside the cash/movers panel, stacking the panel
+   below the table on narrower viewports so the table keeps its full width. */
+.holdings-grid {
+  display: grid; grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 24px; align-items: start;
+}
+@media (max-width: 1200px) {
+  .holdings-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* Table primitives */
 .tbl { width: 100%; border-collapse: separate; border-spacing: 0; }
 .tbl thead th {
   text-align: left; font-size: 11px; font-weight: 500;
   letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3);
-  padding: 12px 16px; border-bottom: 1px solid var(--line);
+  padding: 12px 10px; border-bottom: 1px solid var(--line);
   background: var(--paper-2); position: sticky; top: 0;
 }
 .tbl tbody td {
-  padding: 0 16px; height: var(--row-h);
+  padding: 0 10px; height: var(--row-h);
   border-bottom: 1px solid var(--line-2); vertical-align: middle;
 }
 .tbl tbody tr { transition: background 100ms ease; }
 .tbl tbody tr:hover { background: var(--paper-2); }
-.tbl tbody tr:hover .row-actions { opacity: 1; transform: translateX(0); }
+.tbl tbody tr:hover .row-actions { opacity: 1; transform: translateY(-50%) translateX(0); pointer-events: auto; }
+/* Hover actions overlay the right edge of the row instead of reserving a column,
+   so every data column stays visible without horizontal scrolling. */
 .row-actions {
-  display: inline-flex; gap: 4px;
-  opacity: 0; transform: translateX(4px);
+  position: absolute; right: 8px; top: 50%;
+  transform: translateY(-50%) translateX(6px);
+  display: inline-flex; gap: 4px; align-items: center;
+  padding: 6px 4px 6px 36px;
+  opacity: 0; pointer-events: none;
   transition: opacity 120ms ease, transform 120ms ease;
+  background: linear-gradient(to right, rgba(0,0,0,0) 0, var(--paper-2) 32px);
 }
 .tbl tbody tr:last-child td { border-bottom: 0; }
 .num-cell { font-variant-numeric: tabular-nums; }

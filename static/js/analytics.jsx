@@ -5,6 +5,32 @@ const Analytics = ({ data, onSendReport }) => {
   const [allocMode, setAllocMode] = React.useState("type");
   const [pnlSort, setPnlSort] = React.useState({ col: "total", dir: -1 });
   const [sbSort, setSbSort] = React.useState({ col: "total_pnl", dir: -1 });
+  const [twrRange, setTwrRange] = React.useState("All");
+
+  // Filter + rebase TWR series to the selected range window
+  const TWR_RANGES = ["1W", "1M", "3M", "6M", "1Y", "All"];
+  const TWR_DAYS   = { "1W": 7, "1M": 30, "3M": 90, "6M": 180, "1Y": 365 };
+
+  const twrSeries = React.useMemo(() => {
+    const src = (performance && performance.series) || [];
+    if (!src.length) return src;
+    let slice = src;
+    if (twrRange !== "All") {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - TWR_DAYS[twrRange]);
+      const cutStr = cutoff.toISOString().slice(0, 10);
+      slice = src.filter(p => p.date >= cutStr);
+      if (!slice.length) slice = src; // fallback: not enough history
+    }
+    // Rebase both indices to 100 at the first visible point
+    const baseFace = slice[0].face_index;
+    const baseTwr  = slice[0].twr_index;
+    return slice.map(p => ({
+      ...p,
+      face_index_r: (p.face_index / baseFace) * 100,
+      twr_index_r:  (p.twr_index  / baseTwr)  * 100,
+    }));
+  }, [performance, twrRange]);
 
   const mkToggle = (setFn) => (col) =>
     setFn(s => ({ col, dir: s.col === col ? s.dir * -1 : -1 }));
@@ -139,27 +165,59 @@ const Analytics = ({ data, onSendReport }) => {
             />
           </div>
 
-          {/* TWR vs Face Value chart */}
-          {performance.series && performance.series.length > 1 && (
-            <TwrChart
-              series={[
-                {
-                  label: "Face Value (indexed)",
-                  values: performance.series.map(p => p.face_index),
-                  color: "var(--muted)",
-                  dash: true,
-                },
-                {
-                  label: "True Performance (TWR)",
-                  values: performance.series.map(p => p.twr_index),
-                  color: (performance.twr_cumulative_return_pct ?? 0) >= 0 ? "var(--gain)" : "var(--loss)",
-                },
-              ]}
-              xLabels={performance.series.map(p => p.date.slice(5))}
-              height={260}
-              yLabel="Index (start = 100)"
-            />
-          )}
+          {/* Range selector + chart */}
+          {twrSeries.length > 1 && (() => {
+            const rangeReturn = twrSeries[twrSeries.length - 1].twr_index_r - 100;
+            const chartColor = rangeReturn >= 0 ? "var(--gain)" : "var(--loss)";
+            return (
+              <div>
+                {/* Range buttons */}
+                <div className="row between" style={{ marginBottom: 12, alignItems: "center" }}>
+                  <span className="dim mono" style={{ fontSize: 11 }}>
+                    {twrRange === "All"
+                      ? `From ${performance.twr_start_date}`
+                      : `Last ${twrRange} · rebased to 100`}
+                    {" "}·{" "}
+                    <span style={{ color: rangeReturn >= 0 ? "var(--gain)" : "var(--loss)", fontWeight: 600 }}>
+                      {rangeReturn >= 0 ? "+" : ""}{rangeReturn.toFixed(2)}%
+                    </span>
+                  </span>
+                  <div className="row gap-2" style={{ background: "var(--paper-2)", border: "1px solid var(--line)", borderRadius: 8, padding: 3 }}>
+                    {TWR_RANGES.map(r => (
+                      <button key={r} onClick={() => setTwrRange(r)}
+                        style={{
+                          padding: "5px 11px", fontSize: 12, borderRadius: 6, fontWeight: 500,
+                          background: twrRange === r ? "var(--paper)" : "transparent",
+                          color:      twrRange === r ? "var(--ink)"   : "var(--ink-3)",
+                          boxShadow:  twrRange === r ? "0 1px 2px rgba(0,0,0,.06)" : "none",
+                          border: "none", cursor: "pointer",
+                        }}>
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <TwrChart
+                  series={[
+                    {
+                      label: "Face Value (indexed)",
+                      values: twrSeries.map(p => p.face_index_r),
+                      color: "var(--muted)",
+                      dash: true,
+                    },
+                    {
+                      label: "True Performance (TWR)",
+                      values: twrSeries.map(p => p.twr_index_r),
+                      color: chartColor,
+                    },
+                  ]}
+                  xLabels={twrSeries.map(p => p.date.slice(5))}
+                  height={260}
+                  yLabel="Index (start = 100)"
+                />
+              </div>
+            );
+          })()}
 
           {/* Metric disambiguation note */}
           <div className="dim" style={{ fontSize: 11.5, marginTop: 16, padding: "12px 16px", background: "var(--paper-2)", borderLeft: "2px solid var(--gold)" }}>

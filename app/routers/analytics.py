@@ -482,7 +482,8 @@ async def analytics_scoreboard(
 def _compute_twr(
     snapshots: list,            # PortfolioSnapshot rows, pre-deduplicated & sorted
     transactions: list,         # all Transaction rows for the user
-    mismatch_threshold: float = 50.0,
+    mismatch_threshold: float = 50.0,   # kept for unit-test compatibility
+    threshold_pct: float = 0.02,        # relative threshold: 2% of that day's total_value
 ) -> dict:
     """
     Compute Time-Weighted Return (TWR) from daily snapshots and transactions.
@@ -542,7 +543,13 @@ def _compute_twr(
         expected_change = recorded_flow + buy_sell_impact
         mismatch = actual_cash_change - expected_change
 
-        if abs(mismatch) > mismatch_threshold:
+        # Use the larger of the fixed threshold and a % of portfolio value so
+        # the check scales with portfolio size (avoids false positives on large books)
+        effective_threshold = max(
+            mismatch_threshold,
+            (curr.total_value or 0) * threshold_pct,
+        )
+        if abs(mismatch) > effective_threshold:
             unreliable.add(d)
 
     # Find the first sustained clean day: the first snapshot whose date is strictly

@@ -482,8 +482,8 @@ async def analytics_scoreboard(
 def _compute_twr(
     snapshots: list,            # PortfolioSnapshot rows, pre-deduplicated & sorted
     transactions: list,         # all Transaction rows for the user
-    mismatch_threshold: float = 50.0,   # kept for unit-test compatibility
-    threshold_pct: float = 0.02,        # relative threshold: 2% of that day's total_value
+    flow_threshold_abs: float = 500.0,  # min absolute diff (SAR) before flagging a flow day
+    flow_threshold_pct: float = 0.5,    # …or this fraction of the flow amount, whichever larger
 ) -> dict:
     """
     Compute Time-Weighted Return (TWR) from daily snapshots and transactions.
@@ -506,11 +506,10 @@ def _compute_twr(
         }
 
     # ── Step 1: daily net external cash flow ─────────────────────────────────
+    # Only DEPOSIT (+) and WITHDRAW (−) are external flows. BUY / SELL /
+    # CAPITAL_INCREASE are internal moves and are excluded.
     daily_deposit: dict[str, float] = defaultdict(float)
     daily_withdraw: dict[str, float] = defaultdict(float)
-    # Also track BUY/SELL cash impact for reconciliation check (Step 2)
-    daily_buy: dict[str, float] = defaultdict(float)    # reduces cash (positive means cash out)
-    daily_sell: dict[str, float] = defaultdict(float)   # increases cash (positive means cash in)
 
     for tx in transactions:
         d = (tx.tx_date or "")[:10]
@@ -520,40 +519,38 @@ def _compute_twr(
             daily_deposit[d] += tx.total or 0
         elif tx.tx_type == "WITHDRAW":
             daily_withdraw[d] += tx.total or 0
-        elif tx.tx_type == "BUY":
-            daily_buy[d] += tx.total or 0
-        elif tx.tx_type == "SELL":
-            daily_sell[d] += tx.total or 0
-        # CAPITAL_INCREASE intentionally excluded from all flow calculations
 
     def net_flow(date: str) -> float:
         return daily_deposit[date] - daily_withdraw[date]
 
-    # ── Step 2: detect backfill / data-gap days ───────────────────────────────
-    # Strategy: only flag a true missing-history gap, defined as two consecutive
-    # deduplicated snapshots that are more than GAP_DAYS apart. Cash-balance
-    # reconciliation is too fragile in production (FX rounding, fee differences,
-    # intraday timing) and generates too many false positives.
-    GAP_DAYS = 7
-    unreliable: set[str] = set()
-    from datetime import date as _date
+    # ── Step 2: detect unreliable flow days across the ENTIRE series ──────────
+    # A backfill / lag problem shows up as a day where a DEPOSIT/WITHDRAW was
+    # recorded but total_value did NOT move by roughly that amount (the cash
+    # landed in a later snapshot). We must scan EVERY flow day — not just the
+    # first few — because corrupted days are not necessarily contiguous (e.g.
+    # Feb 24–25 bad, clean stretch, then Mar 7 and Mar 9 bad again).
+    #
+    # For each flow day:  diff = (total_value jump) − (recorded net flow)
+    # `diff` is the implied same-day asset return. On a clean deposit day the
+    # value jumps by ~the deposit, so diff is small. A large diff means the
+    # flow's cash effect did not land in that day's snapshot → unreliable.
+    bad_days: set[str] = set()
     for i in range(1, len(snapshots)):
-        prev_d = snapshots[i - 1].snapshot_date[:10]
-        curr_d = snapshots[i].snapshot_date[:10]
-        try:
-            delta = (_date.fromisoformat(curr_d) - _date.fromisoformat(prev_d)).days
-        except ValueError:
-            continue
-        if delta > GAP_DAYS:
-            # Mark everything up to and including the day before this snapshot
-            # as the end of an unreliable streak
-            unreliable.add(prev_d)
+        d = snapshots[i].snapshot_date[:10]
+        flow = net_flow(d)
+        if flow == 0:
+            continue  # only check days where a deposit/withdrawal was recorded
+        naive_jump = (snapshots[i].total_value or 0) - (snapshots[i - 1].total_value or 0)
+        diff = naive_jump - flow
+        if abs(diff) > max(flow_threshold_abs, abs(flow) * flow_threshold_pct):
+            bad_days.add(d)
 
-    # Find first snapshot strictly after any unreliable day
+    # TWR must start the day AFTER the most recent (largest) bad day — NOT the
+    # first one — so the whole corrupted window is excluded, gaps included.
     twr_start_idx = 0
     twr_start_reason = None
-    if unreliable:
-        last_bad = max(unreliable)
+    if bad_days:
+        last_bad = max(bad_days)
         for i, snap in enumerate(snapshots):
             if snap.snapshot_date[:10] > last_bad:
                 twr_start_idx = i
@@ -563,9 +560,10 @@ def _compute_twr(
         if twr_start_idx > 0:
             start_date = snapshots[twr_start_idx].snapshot_date[:10]
             twr_start_reason = (
-                f"History gap detected before {start_date} "
-                f"(>{GAP_DAYS}-day gap in snapshot data). "
-                f"TWR starts from {start_date}."
+                f"TWR calculation starts from {start_date} due to data "
+                f"inconsistency before this point — {len(bad_days)} day(s) where "
+                f"recorded deposits/withdrawals did not match the change in "
+                f"portfolio value (last on {last_bad})."
             )
 
     twr_start_date = snapshots[twr_start_idx].snapshot_date[:10]
@@ -619,13 +617,15 @@ def _compute_twr(
         "twr_start_date": twr_start_date,
         "twr_start_reason": twr_start_reason,
         "cumulative_return_pct": final_return,
+        "excluded_days": sorted(bad_days),
         "series": series,
     }
 
 
 @router.get("/performance")
 async def analytics_performance(
-    mismatch_threshold: float = 50.0,
+    flow_threshold_abs: float = 500.0,
+    flow_threshold_pct: float = 0.5,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -658,7 +658,7 @@ async def analytics_performance(
     transactions = tx_result.scalars().all()
 
     # ── Compute TWR ───────────────────────────────────────────────────────────
-    twr = _compute_twr(daily_snaps, transactions, mismatch_threshold)
+    twr = _compute_twr(daily_snaps, transactions, flow_threshold_abs, flow_threshold_pct)
 
     # ── Distinct P&L metrics (Step 5) ────────────────────────────────────────
     h_result = await db.execute(
@@ -683,6 +683,7 @@ async def analytics_performance(
         "twr_start_date": twr["twr_start_date"],
         "twr_start_reason": twr["twr_start_reason"],
         "twr_cumulative_return_pct": twr["cumulative_return_pct"],
+        "twr_excluded_days": twr.get("excluded_days", []),
         "unrealized_pnl": unrealized_pnl,
         "realized_pnl": realized_pnl,
         "net_pnl": net_pnl,

@@ -49,7 +49,7 @@ def test_twr_worked_example():
         Tx("2026-01-04", "DEPOSIT", 1000.0),
         Tx("2026-01-04", "BUY",     1000.0),  # cash → asset (internal move, not flow)
     ]
-    result = _compute_twr(snaps, txs, mismatch_threshold=50.0)
+    result = _compute_twr(snaps, txs)
 
     series = result["series"]
     assert len(series) == 4
@@ -70,24 +70,84 @@ def test_twr_worked_example():
     assert series[3]["net_flow"] == 1000.0
 
 
-# ── Test 2: backfill gap flagged when consecutive snapshots are >7 days apart ──
+# ── Test 2: backfill day flagged when a recorded deposit didn't land same-day ──
+# Day 2 records an 8000 deposit but total_value barely moves (+100) — the cash
+# was backfilled/lagged into a later snapshot.
 
 def test_backfill_gap_excluded():
     snaps = [
         Snap("2026-01-01", 10000.0, 5000.0),
-        # 10-day gap — simulates missing history / bulk import
-        Snap("2026-01-11", 18000.0, 13000.0),
-        Snap("2026-01-12", 18050.0, 13000.0),
-        Snap("2026-01-13", 18100.0, 13000.0),
+        Snap("2026-01-02", 10100.0, 5100.0),   # deposit 8000 recorded, value +100 only → BAD
+        Snap("2026-01-03", 18100.0, 13100.0),  # the 8000 finally landed (no flow recorded) → start
+        Snap("2026-01-04", 18281.0, 13100.0),  # +1% clean growth
     ]
-    result = _compute_twr(snaps, [])
+    txs = [Tx("2026-01-02", "DEPOSIT", 8000.0)]
+    result = _compute_twr(snaps, txs)
 
-    # TWR must start from the first snapshot AFTER the gap (2026-01-11)
-    assert result["twr_start_date"] == "2026-01-11", (
-        f"Expected TWR start at 2026-01-11, got {result['twr_start_date']}"
+    assert "2026-01-02" in result["excluded_days"]
+    # TWR must start the day AFTER the bad day
+    assert result["twr_start_date"] == "2026-01-03", (
+        f"Expected TWR start at 2026-01-03, got {result['twr_start_date']}"
     )
     assert result["twr_start_reason"] is not None
-    assert result["series"][0]["date"] == "2026-01-11"
+    assert result["series"][0]["date"] == "2026-01-03"
+
+
+# ── Test 2b: REQUIRED — backfill gap in the MIDDLE of the series ───────────────
+# 20 clean days, then 1 bad deposit day (value barely moves), then clean days.
+# Catches the exact bug that shipped: a detector that only checks the start.
+
+def test_backfill_gap_midseries():
+    snaps = []
+    # 20 clean flat days, no flows (2026-01-01 .. 2026-01-20)
+    for day in range(1, 21):
+        snaps.append(Snap(f"2026-01-{day:02d}", 10000.0, 2000.0))
+    # Day 21: big deposit recorded, value barely moves → BAD (mid-series)
+    snaps.append(Snap("2026-01-21", 10100.0, 2100.0))
+    # Days 22-24: the 5000 landed, then clean +1%/day growth
+    snaps.append(Snap("2026-01-22", 15100.0, 7100.0))   # start date
+    snaps.append(Snap("2026-01-23", 15251.0, 7100.0))   # +1%
+    snaps.append(Snap("2026-01-24", 15403.51, 7100.0))  # +1%
+    txs = [Tx("2026-01-21", "DEPOSIT", 5000.0)]
+
+    result = _compute_twr(snaps, txs)
+
+    # 1. The mid-series bad day is flagged
+    assert result["excluded_days"] == ["2026-01-21"], result["excluded_days"]
+    # 2. TWR starts the day AFTER the bad day — NOT day 1 of the series
+    assert result["twr_start_date"] == "2026-01-22", result["twr_start_date"]
+    assert result["series"][0]["date"] == "2026-01-22"
+    # 3. Final TWR computed only from the clean post-gap window (~+2.01%)
+    assert abs(result["cumulative_return_pct"] - 2.01) < 0.05, result["cumulative_return_pct"]
+
+
+# ── Test 2c: non-contiguous bad days — start after the LAST one ────────────────
+# Mirrors production: Feb 24-25 bad, clean stretch, then Mar 7 & Mar 9 bad again.
+
+def test_backfill_noncontiguous_starts_after_last():
+    snaps = [
+        Snap("2026-02-23", 10000.0, 5000.0),
+        Snap("2026-02-24", 10050.0, 5050.0),   # deposit 3000 recorded, +50 only → BAD
+        Snap("2026-02-25", 13100.0, 8100.0),   # clean (3000 landed, no flow)
+        Snap("2026-02-26", 13150.0, 8100.0),   # clean
+        Snap("2026-02-27", 13200.0, 8100.0),   # clean
+        Snap("2026-02-28", 16280.0, 11180.0),  # deposit 3000 recorded → value +3080 ≈ clean
+        Snap("2026-03-01", 16300.0, 11200.0),  # bad late day: deposit 2000, +20 only → BAD
+        Snap("2026-03-02", 18300.0, 13200.0),  # the 2000 landed → start date
+        Snap("2026-03-03", 18483.0, 13200.0),  # +1%
+    ]
+    txs = [
+        Tx("2026-02-24", "DEPOSIT", 3000.0),
+        Tx("2026-02-28", "DEPOSIT", 3000.0),
+        Tx("2026-03-01", "DEPOSIT", 2000.0),
+    ]
+    result = _compute_twr(snaps, txs)
+
+    assert "2026-02-24" in result["excluded_days"]
+    assert "2026-03-01" in result["excluded_days"]
+    assert "2026-02-28" not in result["excluded_days"]  # clean deposit day
+    # Start after the LAST bad day (Mar 1), not the first (Feb 24)
+    assert result["twr_start_date"] == "2026-03-02", result["twr_start_date"]
 
 
 # ── Test 3: CAPITAL_INCREASE excluded from cash-flow calculations ─────────────
@@ -102,7 +162,7 @@ def test_capital_increase_excluded_from_flow():
         Tx("2026-01-02", "CAPITAL_INCREASE", 0.0),
         Tx("2026-01-02", "CAPITAL_INCREASE", 9999.0),  # large amount — must be ignored
     ]
-    result = _compute_twr(snaps, txs, mismatch_threshold=50.0)
+    result = _compute_twr(snaps, txs)
 
     # No unreliable days — CAPITAL_INCREASE must not inflate cash flow
     assert result["twr_start_date"] == "2026-01-01"
@@ -138,7 +198,7 @@ def test_snapshot_deduplication_keeps_latest():
 # ── Test 5: no data → graceful empty response ─────────────────────────────────
 
 def test_empty_snapshots():
-    result = _compute_twr([], [], mismatch_threshold=50.0)
+    result = _compute_twr([], [])
     assert result["twr_start_date"] is None
     assert result["series"] == []
     assert result["cumulative_return_pct"] is None
@@ -152,7 +212,7 @@ def test_pure_growth_no_deposits():
         Snap("2026-01-02", 11000.0, 0.0),
         Snap("2026-01-03", 11550.0, 0.0),
     ]
-    result = _compute_twr(snaps, [], mismatch_threshold=50.0)
+    result = _compute_twr(snaps, [])
     # +10% then +5% → cumulative 1.10 × 1.05 − 1 = 15.5%
     assert abs(result["cumulative_return_pct"] - 15.5) < 0.01
 
@@ -161,6 +221,8 @@ if __name__ == "__main__":
     tests = [
         test_twr_worked_example,
         test_backfill_gap_excluded,
+        test_backfill_gap_midseries,
+        test_backfill_noncontiguous_starts_after_last,
         test_capital_increase_excluded_from_flow,
         test_snapshot_deduplication_keeps_latest,
         test_empty_snapshots,

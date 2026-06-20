@@ -207,6 +207,7 @@
       performance: {
         twr_start_date:            performanceRaw.twr_start_date            || null,
         twr_start_reason:          performanceRaw.twr_start_reason          || null,
+        twr_excluded_days:         performanceRaw.twr_excluded_days         || [],
         twr_cumulative_return_pct: performanceRaw.twr_cumulative_return_pct ?? null,
         unrealized_pnl:            performanceRaw.unrealized_pnl            ?? null,
         realized_pnl:              performanceRaw.realized_pnl              ?? null,

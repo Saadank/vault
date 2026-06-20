@@ -324,4 +324,153 @@ const RangeSelector = ({ value, onChange, ranges = ["1D", "1W", "1M", "3M", "YTD
   </div>
 );
 
-Object.assign(window, { AreaChart, Sparkline, Donut, StackedBars, PairedBars, RangeSelector });
+// ---- TWR dual-line chart ----
+// series: [{ label, values: [number], color, dash? }]
+// xLabels: [string]  (same length as values)
+const TwrChart = ({ series, xLabels, height = 260, yLabel = "" }) => {
+  const wrapRef = React.useRef(null);
+  const [w, setW] = React.useState(900);
+  const [hover, setHover] = React.useState(null);
+
+  React.useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(e => setW(Math.floor(e[0].contentRect.width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  if (!series || series.length === 0 || !xLabels || xLabels.length < 2)
+    return <div ref={wrapRef} style={{ height }} />;
+
+  const pad = { t: 16, r: 20, b: 36, l: 44 };
+  const iw = w - pad.l - pad.r;
+  const ih = height - pad.t - pad.b;
+  const n = xLabels.length;
+
+  const allVals = series.flatMap(s => s.values);
+  const minV = Math.min(...allVals);
+  const maxV = Math.max(...allVals);
+  const span = maxV - minV || 1;
+
+  const px = i => pad.l + (i / (n - 1)) * iw;
+  const py = v => pad.t + ih - ((v - minV) / span) * ih;
+
+  const path = (vals) =>
+    vals.map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
+
+  // Y axis ticks
+  const nTicks = 5;
+  const ticks = Array.from({ length: nTicks }, (_, i) => minV + (i / (nTicks - 1)) * span);
+
+  // X axis: thin out labels
+  const xStep = Math.max(1, Math.floor(n / 8));
+  const xTicks = xLabels.map((l, i) => ({ l, i })).filter(({ i }) => i % xStep === 0 || i === n - 1);
+
+  // Tooltip crosshair
+  const hitW = iw / (n - 1);
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative", userSelect: "none" }}>
+      <svg width={w} height={height} style={{ display: "block", overflow: "visible" }}
+        onMouseMove={e => {
+          const rect = wrapRef.current.getBoundingClientRect();
+          const mx = e.clientX - rect.left - pad.l;
+          const idx = Math.max(0, Math.min(n - 1, Math.round(mx / (iw / (n - 1)))));
+          setHover(idx);
+        }}
+        onMouseLeave={() => setHover(null)}
+      >
+        {/* Grid + y-axis labels */}
+        {ticks.map((v, i) => {
+          const y = py(v);
+          return (
+            <g key={i}>
+              <line x1={pad.l} x2={pad.l + iw} y1={y} y2={y} stroke="var(--line)" strokeWidth={0.5} />
+              <text x={pad.l - 6} y={y + 4} textAnchor="end" fill="var(--ink-3)"
+                    style={{ fontSize: 10, fontFamily: "monospace" }}>{v.toFixed(1)}</text>
+            </g>
+          );
+        })}
+
+        {/* x-axis labels */}
+        {xTicks.map(({ l, i }) => (
+          <text key={i} x={px(i)} y={pad.t + ih + 18} textAnchor="middle" fill="var(--ink-3)"
+                style={{ fontSize: 10, fontFamily: "monospace" }}>{l}</text>
+        ))}
+
+        {/* y-axis label */}
+        {yLabel && (
+          <text transform={`translate(12,${pad.t + ih / 2}) rotate(-90)`} textAnchor="middle"
+                fill="var(--ink-3)" style={{ fontSize: 9, fontFamily: "monospace" }}>{yLabel}</text>
+        )}
+
+        {/* Series lines */}
+        {series.map((s, si) => (
+          <path key={si} d={path(s.values)} fill="none" stroke={s.color}
+                strokeWidth={s.dash ? 1.5 : 2}
+                strokeDasharray={s.dash ? "5,4" : undefined}
+                strokeLinecap="round" strokeLinejoin="round" />
+        ))}
+
+        {/* Reference line at 100 */}
+        {minV <= 100 && maxV >= 100 && (
+          <line x1={pad.l} x2={pad.l + iw} y1={py(100)} y2={py(100)}
+                stroke="var(--ink-3)" strokeWidth={0.5} strokeDasharray="2,4" />
+        )}
+
+        {/* Crosshair */}
+        {hover !== null && (
+          <>
+            <line x1={px(hover)} x2={px(hover)} y1={pad.t} y2={pad.t + ih}
+                  stroke="var(--ink-3)" strokeWidth={1} />
+            {series.map((s, si) => (
+              <circle key={si} cx={px(hover)} cy={py(s.values[hover])} r={3.5}
+                      fill={s.color} stroke="var(--bg)" strokeWidth={1.5} />
+            ))}
+          </>
+        )}
+      </svg>
+
+      {/* Tooltip */}
+      {hover !== null && (
+        <div style={{
+          position: "absolute",
+          top: pad.t,
+          left: Math.min(px(hover) + 12, w - 180),
+          background: "#000",
+          border: "1px solid var(--line)",
+          padding: "8px 12px",
+          fontSize: 11,
+          fontFamily: "monospace",
+          pointerEvents: "none",
+          whiteSpace: "nowrap",
+          zIndex: 10,
+        }}>
+          <div style={{ color: "var(--ink-2)", marginBottom: 4 }}>{xLabels[hover]}</div>
+          {series.map((s, si) => (
+            <div key={si} style={{ color: s.color, marginBottom: 2 }}>
+              {s.label}: {s.values[hover].toFixed(1)}
+              {si === 1 && <span style={{ color: "var(--ink-3)" }}> ({s.values[hover] >= 100 ? "+" : ""}{(s.values[hover] - 100).toFixed(2)}%)</span>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Legend */}
+      <div className="row gap-16" style={{ marginTop: 12, justifyContent: "flex-end", paddingRight: pad.r }}>
+        {series.map((s, i) => (
+          <div key={i} className="row gap-6" style={{ fontSize: 11, color: "var(--ink-3)", alignItems: "center" }}>
+            <svg width={20} height={8}>
+              <line x1={0} y1={4} x2={20} y2={4} stroke={s.color} strokeWidth={s.dash ? 1.5 : 2}
+                    strokeDasharray={s.dash ? "5,4" : undefined} />
+            </svg>
+            {s.label}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+Object.assign(window, { AreaChart, Sparkline, Donut, StackedBars, PairedBars, RangeSelector, TwrChart });

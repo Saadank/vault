@@ -477,7 +477,225 @@ async def analytics_scoreboard(
     return rows
 
 
-# ── 7. Send report on demand ──────────────────────────────────────────────────
+# ── 7. True Performance (TWR) ────────────────────────────────────────────────
+
+def _compute_twr(
+    snapshots: list,            # PortfolioSnapshot rows, pre-deduplicated & sorted
+    transactions: list,         # all Transaction rows for the user
+    mismatch_threshold: float = 50.0,
+) -> dict:
+    """
+    Compute Time-Weighted Return (TWR) from daily snapshots and transactions.
+
+    Steps:
+      1. Build daily net external cash flow (DEPOSIT adds, WITHDRAW subtracts).
+      2. Detect backfill / data-gap days via cash-balance reconciliation.
+      3. Chain-link daily sub-period returns, starting from the first clean day.
+      4. Return time series + summary metrics.
+    """
+    if not snapshots:
+        return {
+            "twr_start_date": None,
+            "twr_start_reason": "No snapshot data available.",
+            "cumulative_return_pct": None,
+            "series": [],
+            "unrealized_pnl": None,
+            "realized_pnl": None,
+            "net_pnl": None,
+        }
+
+    # ── Step 1: daily net external cash flow ─────────────────────────────────
+    daily_deposit: dict[str, float] = defaultdict(float)
+    daily_withdraw: dict[str, float] = defaultdict(float)
+    # Also track BUY/SELL cash impact for reconciliation check (Step 2)
+    daily_buy: dict[str, float] = defaultdict(float)    # reduces cash (positive means cash out)
+    daily_sell: dict[str, float] = defaultdict(float)   # increases cash (positive means cash in)
+
+    for tx in transactions:
+        d = (tx.tx_date or "")[:10]
+        if not d:
+            continue
+        if tx.tx_type == "DEPOSIT":
+            daily_deposit[d] += tx.total or 0
+        elif tx.tx_type == "WITHDRAW":
+            daily_withdraw[d] += tx.total or 0
+        elif tx.tx_type == "BUY":
+            daily_buy[d] += tx.total or 0
+        elif tx.tx_type == "SELL":
+            daily_sell[d] += tx.total or 0
+        # CAPITAL_INCREASE intentionally excluded from all flow calculations
+
+    def net_flow(date: str) -> float:
+        return daily_deposit[date] - daily_withdraw[date]
+
+    # ── Step 2: detect backfill / data-gap days ───────────────────────────────
+    unreliable: set[str] = set()
+    for i in range(1, len(snapshots)):
+        prev = snapshots[i - 1]
+        curr = snapshots[i]
+        d = curr.snapshot_date[:10]
+
+        actual_cash_change = (curr.cash_balance or 0) - (prev.cash_balance or 0)
+        recorded_flow = net_flow(d)
+        # BUY reduces cash (negative), SELL increases it (positive)
+        buy_sell_impact = daily_sell[d] - daily_buy[d]
+        expected_change = recorded_flow + buy_sell_impact
+        mismatch = actual_cash_change - expected_change
+
+        if abs(mismatch) > mismatch_threshold:
+            unreliable.add(d)
+
+    # Find the first sustained clean day: the first snapshot whose date is strictly
+    # after every unreliable day (backfill gaps are typically at the start of history).
+    twr_start_idx = 0
+    twr_start_reason = None
+    if unreliable:
+        last_bad = max(unreliable)
+        for i, snap in enumerate(snapshots):
+            if snap.snapshot_date[:10] > last_bad:
+                twr_start_idx = i
+                break
+        else:
+            # All days are unreliable — fall back to last snapshot
+            twr_start_idx = len(snapshots) - 1
+        if twr_start_idx > 0:
+            start_date = snapshots[twr_start_idx].snapshot_date[:10]
+            twr_start_reason = (
+                f"Data inconsistency detected before {start_date}. "
+                f"TWR calculation starts from {start_date} "
+                f"({twr_start_idx} day(s) excluded)."
+            )
+
+    twr_start_date = snapshots[twr_start_idx].snapshot_date[:10]
+    working = snapshots[twr_start_idx:]
+
+    if not working:
+        return {
+            "twr_start_date": None,
+            "twr_start_reason": "All snapshot days were flagged as unreliable.",
+            "cumulative_return_pct": None,
+            "series": [],
+            "unrealized_pnl": None,
+            "realized_pnl": None,
+            "net_pnl": None,
+        }
+
+    # ── Step 3: chain-link TWR ────────────────────────────────────────────────
+    series = []
+    twr_index = 100.0
+    base_value = working[0].total_value  # for face-value indexing
+
+    for i, snap in enumerate(working):
+        d = snap.snap_date = snap.snapshot_date[:10]
+        flow = net_flow(d)
+
+        if i == 0:
+            cum_return = 0.0
+        else:
+            prev_value = working[i - 1].total_value or 0
+            if prev_value > 0:
+                return_i = (snap.total_value - flow - prev_value) / prev_value
+            else:
+                return_i = 0.0
+            twr_index *= (1 + return_i)
+            cum_return = round(twr_index - 100, 4)
+
+        face_index = round((snap.total_value / base_value) * 100, 4) if base_value else 100.0
+
+        series.append({
+            "date": d,
+            "total_value": round(snap.total_value, 2),
+            "twr_index": round(twr_index, 4),
+            "cumulative_return_pct": cum_return,
+            "net_flow": round(flow, 2),
+            "face_index": face_index,
+        })
+
+    final_return = round(twr_index - 100, 2) if series else None
+
+    return {
+        "twr_start_date": twr_start_date,
+        "twr_start_reason": twr_start_reason,
+        "cumulative_return_pct": final_return,
+        "series": series,
+    }
+
+
+@router.get("/performance")
+async def analytics_performance(
+    mismatch_threshold: float = 50.0,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    True Performance endpoint — returns TWR time series + four distinct P&L metrics.
+
+    The four metrics (unrealized_pnl, realized_pnl, net_pnl, twr_cumulative_return_pct)
+    answer different questions and must never be summed or conflated.
+    """
+    # ── Fetch snapshots ───────────────────────────────────────────────────────
+    snap_result = await db.execute(
+        select(PortfolioSnapshot)
+        .where(PortfolioSnapshot.user_id == user.id)
+        .order_by(PortfolioSnapshot.snapshot_date, PortfolioSnapshot.created_at)
+    )
+    all_snaps = snap_result.scalars().all()
+
+    # Deduplicate: one row per calendar day, keeping latest created_at
+    day_map: dict[str, object] = {}
+    for s in all_snaps:
+        day = s.snapshot_date[:10]
+        if day not in day_map or (s.created_at and day_map[day].created_at and s.created_at > day_map[day].created_at):
+            day_map[day] = s
+    daily_snaps = sorted(day_map.values(), key=lambda s: s.snapshot_date[:10])
+
+    # ── Fetch transactions (all types) ────────────────────────────────────────
+    tx_result = await db.execute(
+        select(Transaction).where(Transaction.user_id == user.id)
+    )
+    transactions = tx_result.scalars().all()
+
+    # ── Compute TWR ───────────────────────────────────────────────────────────
+    twr = _compute_twr(daily_snaps, transactions, mismatch_threshold)
+
+    # ── Distinct P&L metrics (Step 5) ────────────────────────────────────────
+    h_result = await db.execute(
+        select(Holding).where(Holding.user_id == user.id, Holding.quantity > 0)
+    )
+    holdings = h_result.scalars().all()
+
+    unrealized_pnl = round(
+        sum(h.quantity * (h.current_price - h.avg_cost) for h in holdings), 2
+    )
+    realized_pnl = round(
+        sum(t.realized_pnl for t in transactions if t.realized_pnl is not None), 2
+    )
+    net_pnl = round(unrealized_pnl + realized_pnl, 2)
+
+    # Geography heuristic flag (Step 7)
+    geo_heuristic = not any(
+        getattr(h, "country", None) or getattr(h, "sector", None) for h in holdings
+    )
+
+    return {
+        "twr_start_date": twr["twr_start_date"],
+        "twr_start_reason": twr["twr_start_reason"],
+        "twr_cumulative_return_pct": twr["cumulative_return_pct"],
+        "unrealized_pnl": unrealized_pnl,
+        "realized_pnl": realized_pnl,
+        "net_pnl": net_pnl,
+        "geo_classifications_heuristic": geo_heuristic,
+        "series": twr["series"],
+        "metric_descriptions": {
+            "unrealized_pnl": "Open positions: market value − cost basis. What you'd net if you sold everything today.",
+            "realized_pnl": "Closed trades: sum of booked profits/losses. Money already banked.",
+            "net_pnl": "unrealized + realized. Total SAR result across every trade ever made.",
+            "twr_cumulative_return_pct": "Time-Weighted Return %. How each riyal invested grew or shrank, independent of deposit timing and size.",
+        },
+    }
+
+
+# ── 8. Send report on demand ──────────────────────────────────────────────────
 @router.post("/report/send")
 async def send_report_now(user: User = Depends(get_current_user)):
     """Immediately generate and email the portfolio report to the logged-in user."""

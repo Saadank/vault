@@ -1,7 +1,7 @@
-// Analytics screen — overview, allocation, P&L, activity, cashflow, scoreboard.
+// Analytics screen — overview, true performance, allocation, P&L, activity, cashflow, scoreboard.
 
 const Analytics = ({ data, onSendReport }) => {
-  const { overview, allocation, pnl, monthlyTx, mostTraded, cashflow, scoreboard, fmt, summary } = data;
+  const { overview, allocation, pnl, monthlyTx, mostTraded, cashflow, scoreboard, performance, fmt, summary } = data;
   const [allocMode, setAllocMode] = React.useState("type");
   const [pnlSort, setPnlSort] = React.useState({ col: "total", dir: -1 });
   const [sbSort, setSbSort] = React.useState({ col: "total_pnl", dir: -1 });
@@ -93,6 +93,88 @@ const Analytics = ({ data, onSendReport }) => {
           />
         </div>
       </Section>
+
+      {/* True Performance (TWR) */}
+      {performance && (
+        <Section
+          eyebrow="True Performance"
+          title="Return adjusted for deposits &amp; withdrawals"
+          action={
+            performance.twr_start_date && (
+              <span className="dim mono" style={{ fontSize: 11 }}>
+                index = 100 on {performance.twr_start_date}
+                {performance.twr_start_reason && (
+                  <span style={{ marginLeft: 8, color: "var(--gold)" }} title={performance.twr_start_reason}>⚠ data gap</span>
+                )}
+              </span>
+            )
+          }
+        >
+          {/* Four distinct metric KPIs */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16, marginBottom: 24 }}>
+            <KPI
+              label="True Return (TWR)"
+              value={performance.twr_cumulative_return_pct !== null ? fmt.PCT(performance.twr_cumulative_return_pct, { sign: true }) : "—"}
+              accent={performance.twr_cumulative_return_pct >= 0 ? "var(--gain)" : "var(--loss)"}
+              sub={<span className="dim" style={{ fontSize: 11 }}>Each riyal in, adjusted for timing of deposits</span>}
+              large
+            />
+            <KPI
+              label="Unrealized P&L"
+              value={performance.unrealized_pnl !== null ? fmt.SAR(performance.unrealized_pnl, { sign: true }) : "—"}
+              accent={performance.unrealized_pnl >= 0 ? "var(--gain)" : "var(--loss)"}
+              sub={<span className="dim" style={{ fontSize: 11 }}>Open positions: what you'd net selling today</span>}
+            />
+            <KPI
+              label="Realized P&L"
+              value={performance.realized_pnl !== null ? fmt.SAR(performance.realized_pnl, { sign: true }) : "—"}
+              accent={performance.realized_pnl >= 0 ? "var(--gain)" : "var(--loss)"}
+              sub={<span className="dim" style={{ fontSize: 11 }}>Closed trades: profit already banked</span>}
+            />
+            <KPI
+              label="Net P&L (All Trades)"
+              value={performance.net_pnl !== null ? fmt.SAR(performance.net_pnl, { sign: true }) : "—"}
+              accent={performance.net_pnl >= 0 ? "var(--gain)" : "var(--loss)"}
+              sub={<span className="dim" style={{ fontSize: 11 }}>Unrealized + realized · total SAR result</span>}
+            />
+          </div>
+
+          {/* TWR vs Face Value chart */}
+          {performance.series && performance.series.length > 1 && (
+            <TwrChart
+              series={[
+                {
+                  label: "Face Value (indexed)",
+                  values: performance.series.map(p => p.face_index),
+                  color: "var(--muted)",
+                  dash: true,
+                },
+                {
+                  label: "True Performance (TWR)",
+                  values: performance.series.map(p => p.twr_index),
+                  color: (performance.twr_cumulative_return_pct ?? 0) >= 0 ? "var(--gain)" : "var(--loss)",
+                },
+              ]}
+              xLabels={performance.series.map(p => p.date.slice(5))}
+              height={260}
+              yLabel="Index (start = 100)"
+            />
+          )}
+
+          {/* Metric disambiguation note */}
+          <div className="dim" style={{ fontSize: 11.5, marginTop: 16, padding: "12px 16px", background: "var(--paper-2)", borderLeft: "2px solid var(--gold)" }}>
+            <strong style={{ color: "var(--text)" }}>These four numbers answer different questions — do not sum them.</strong>
+            {" "}TWR % measures growth per riyal invested regardless of deposit size or timing.
+            Net P&L measures total SAR result. They can point in opposite directions (e.g. TWR negative while Net P&L is positive)
+            when large deposits arrived just before a market dip — that's correct, not a bug.
+            {performance.geo_heuristic && (
+              <span style={{ display: "block", marginTop: 8, color: "var(--muted)" }}>
+                ⚠ Geography &amp; currency breakdowns elsewhere in this page are inferred from ticker suffixes, not real DB fields — treat as approximate.
+              </span>
+            )}
+          </div>
+        </Section>
+      )}
 
       {/* Allocation */}
       <Section eyebrow="Allocation"

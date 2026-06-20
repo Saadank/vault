@@ -6,10 +6,10 @@ const Transactions = ({ data, onReload }) => {
   const [search, setSearch] = React.useState("");
   const [pendingDelete, setPendingDelete] = React.useState(null);
   const [deleting, setDeleting] = React.useState(false);
-  const [list, setList] = React.useState(data.transactions);
+  const [list, setList] = React.useState(data.transactions || []);
 
   // Keep local list in sync when parent data reloads
-  React.useEffect(() => { setList(data.transactions); }, [data.transactions]);
+  React.useEffect(() => { setList(data.transactions || []); }, [data.transactions]);
 
   const types = ["ALL", "BUY", "SELL", "DEPOSIT", "WITHDRAW", "CAPITAL_INCREASE"];
 
@@ -32,12 +32,13 @@ const Transactions = ({ data, onReload }) => {
   }, [filtered]);
 
   const txMeta = {
-    BUY: { color: "var(--ink-2)", bg: "var(--paper-2)", label: "Buy", icon: "arrowUpRight" },
-    SELL: { color: "var(--accent-ink)", bg: "var(--accent-soft)", label: "Sell", icon: "arrowDownLeft" },
-    DEPOSIT: { color: "var(--gain)", bg: "var(--gain-soft)", label: "Deposit", icon: "arrowDownLeft" },
-    WITHDRAW: { color: "var(--loss)", bg: "var(--loss-soft)", label: "Withdraw", icon: "arrowUpRight" },
-    CAPITAL_INCREASE: { color: "var(--accent-ink)", bg: "var(--accent-soft)", label: "Cap. Increase", icon: "gift" },
+    BUY:             { color: "var(--ink-2)",      bg: "var(--paper-2)",    label: "Buy",           icon: "arrowUpRight" },
+    SELL:            { color: "var(--accent-ink)", bg: "var(--accent-soft)", label: "Sell",          icon: "arrowDownLeft" },
+    DEPOSIT:         { color: "var(--gain)",       bg: "var(--gain-soft)",  label: "Deposit",        icon: "arrowDownLeft" },
+    WITHDRAW:        { color: "var(--loss)",       bg: "var(--loss-soft)",  label: "Withdraw",       icon: "arrowUpRight" },
+    CAPITAL_INCREASE:{ color: "var(--accent-ink)", bg: "var(--accent-soft)", label: "Cap. Increase", icon: "gift" },
   };
+  const META_FALLBACK = { color: "var(--ink-3)", bg: "var(--paper-2)", label: "Other", icon: "arrowUpRight" };
 
   const monthTotals = (rows) => {
     let buyTotal = 0, sellTotal = 0, deposit = 0, withdraw = 0, realized = 0;
@@ -155,7 +156,7 @@ const Transactions = ({ data, onReload }) => {
                   </thead>
                   <tbody>
                     {rows.map(t => {
-                      const meta = txMeta[t.tx_type];
+                      const meta = txMeta[t.tx_type] || META_FALLBACK;
                       return (
                         <tr key={t.id}>
                           <td className="mono dim" style={{ fontSize: 11.5 }}>{t.tx_date}</td>

@@ -64,6 +64,7 @@
       cashflowRaw,
       scoreboardRaw,
       lastUpdatedRaw,
+      performanceRaw,
     ] = await Promise.all([
       apiFetch("/api/auth/me"),
       apiFetch("/api/portfolio/summary"),
@@ -79,6 +80,17 @@
       apiFetch("/api/analytics/cashflow").catch(() => ({ summary: {}, monthly: [] })),
       apiFetch("/api/analytics/scoreboard").catch(() => []),
       apiFetch("/api/prices/last-updated").catch(() => ({ last_updated: null, snapshot_date: null })),
+      apiFetch("/api/analytics/performance").catch(() => ({
+        twr_start_date: null,
+        twr_start_reason: null,
+        twr_cumulative_return_pct: null,
+        unrealized_pnl: null,
+        realized_pnl: null,
+        net_pnl: null,
+        geo_classifications_heuristic: true,
+        series: [],
+        metric_descriptions: {},
+      })),
     ]);
 
     // ── Holdings: add client-side computed fields ────────────────────────────
@@ -192,6 +204,17 @@
       },
       scoreboard: scoreboardRaw || [],
       lastUpdated: lastUpdatedRaw.last_updated || null,
+      performance: {
+        twr_start_date:            performanceRaw.twr_start_date            || null,
+        twr_start_reason:          performanceRaw.twr_start_reason          || null,
+        twr_cumulative_return_pct: performanceRaw.twr_cumulative_return_pct ?? null,
+        unrealized_pnl:            performanceRaw.unrealized_pnl            ?? null,
+        realized_pnl:              performanceRaw.realized_pnl              ?? null,
+        net_pnl:                   performanceRaw.net_pnl                   ?? null,
+        geo_heuristic:             performanceRaw.geo_classifications_heuristic ?? true,
+        series:                    performanceRaw.series                    || [],
+        metric_descriptions:       performanceRaw.metric_descriptions       || {},
+      },
       fmt,
     };
 

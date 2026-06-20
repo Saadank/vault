@@ -530,30 +530,26 @@ def _compute_twr(
         return daily_deposit[date] - daily_withdraw[date]
 
     # ── Step 2: detect backfill / data-gap days ───────────────────────────────
+    # Strategy: only flag a true missing-history gap, defined as two consecutive
+    # deduplicated snapshots that are more than GAP_DAYS apart. Cash-balance
+    # reconciliation is too fragile in production (FX rounding, fee differences,
+    # intraday timing) and generates too many false positives.
+    GAP_DAYS = 7
     unreliable: set[str] = set()
+    from datetime import date as _date
     for i in range(1, len(snapshots)):
-        prev = snapshots[i - 1]
-        curr = snapshots[i]
-        d = curr.snapshot_date[:10]
+        prev_d = snapshots[i - 1].snapshot_date[:10]
+        curr_d = snapshots[i].snapshot_date[:10]
+        try:
+            delta = (_date.fromisoformat(curr_d) - _date.fromisoformat(prev_d)).days
+        except ValueError:
+            continue
+        if delta > GAP_DAYS:
+            # Mark everything up to and including the day before this snapshot
+            # as the end of an unreliable streak
+            unreliable.add(prev_d)
 
-        actual_cash_change = (curr.cash_balance or 0) - (prev.cash_balance or 0)
-        recorded_flow = net_flow(d)
-        # BUY reduces cash (negative), SELL increases it (positive)
-        buy_sell_impact = daily_sell[d] - daily_buy[d]
-        expected_change = recorded_flow + buy_sell_impact
-        mismatch = actual_cash_change - expected_change
-
-        # Use the larger of the fixed threshold and a % of portfolio value so
-        # the check scales with portfolio size (avoids false positives on large books)
-        effective_threshold = max(
-            mismatch_threshold,
-            (curr.total_value or 0) * threshold_pct,
-        )
-        if abs(mismatch) > effective_threshold:
-            unreliable.add(d)
-
-    # Find the first sustained clean day: the first snapshot whose date is strictly
-    # after every unreliable day (backfill gaps are typically at the start of history).
+    # Find first snapshot strictly after any unreliable day
     twr_start_idx = 0
     twr_start_reason = None
     if unreliable:
@@ -563,14 +559,13 @@ def _compute_twr(
                 twr_start_idx = i
                 break
         else:
-            # All days are unreliable — fall back to last snapshot
             twr_start_idx = len(snapshots) - 1
         if twr_start_idx > 0:
             start_date = snapshots[twr_start_idx].snapshot_date[:10]
             twr_start_reason = (
-                f"Data inconsistency detected before {start_date}. "
-                f"TWR calculation starts from {start_date} "
-                f"({twr_start_idx} day(s) excluded)."
+                f"History gap detected before {start_date} "
+                f"(>{GAP_DAYS}-day gap in snapshot data). "
+                f"TWR starts from {start_date}."
             )
 
     twr_start_date = snapshots[twr_start_idx].snapshot_date[:10]

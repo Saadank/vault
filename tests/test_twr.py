@@ -70,29 +70,24 @@ def test_twr_worked_example():
     assert series[3]["net_flow"] == 1000.0
 
 
-# ── Test 2: backfill gap day flagged and excluded from TWR start ──────────────
-# Day 2 has a large unexplained cash-balance jump not matched by recorded flows.
+# ── Test 2: backfill gap flagged when consecutive snapshots are >7 days apart ──
 
 def test_backfill_gap_excluded():
     snaps = [
         Snap("2026-01-01", 10000.0, 5000.0),
-        # Cash jumped 8000 but only 100 deposit recorded → mismatch ≈ 7900
-        Snap("2026-01-02", 18000.0, 13000.0),
-        Snap("2026-01-03", 18050.0, 13000.0),
-        Snap("2026-01-04", 18100.0, 13000.0),
+        # 10-day gap — simulates missing history / bulk import
+        Snap("2026-01-11", 18000.0, 13000.0),
+        Snap("2026-01-12", 18050.0, 13000.0),
+        Snap("2026-01-13", 18100.0, 13000.0),
     ]
-    txs = [
-        Tx("2026-01-02", "DEPOSIT", 100.0),
-    ]
-    result = _compute_twr(snaps, txs, mismatch_threshold=50.0)
+    result = _compute_twr(snaps, [])
 
-    # TWR should NOT start on 2026-01-01 or 2026-01-02 (gap day)
-    assert result["twr_start_date"] == "2026-01-03", (
-        f"Expected TWR start at 2026-01-03, got {result['twr_start_date']}"
+    # TWR must start from the first snapshot AFTER the gap (2026-01-11)
+    assert result["twr_start_date"] == "2026-01-11", (
+        f"Expected TWR start at 2026-01-11, got {result['twr_start_date']}"
     )
     assert result["twr_start_reason"] is not None
-    # Series should start from the first clean day
-    assert result["series"][0]["date"] == "2026-01-03"
+    assert result["series"][0]["date"] == "2026-01-11"
 
 
 # ── Test 3: CAPITAL_INCREASE excluded from cash-flow calculations ─────────────

@@ -11,7 +11,8 @@ from app.database import get_db, User, Holding, Transaction, CashBalance
 from app.auth import get_current_user
 from app.schemas import (
     HoldingCreate, HoldingOut, HoldingUpdate, NotesUpdate,
-    SellRequest, TransactionOut, PortfolioSummary, CapitalIncreaseRequest
+    SellRequest, TransactionOut, PortfolioSummary, CapitalIncreaseRequest,
+    FundFlowRequest,
 )
 
 router = APIRouter(prefix="/api/portfolio", tags=["portfolio"])
@@ -202,7 +203,7 @@ async def delete_holding(
     holding = result.scalar_one_or_none()
     if not holding:
         raise HTTPException(404, "Holding not found")
-    db.delete(holding)
+    await db.delete(holding)   # async session: delete() is a coroutine, must be awaited
     await db.commit()
 
 
@@ -232,7 +233,7 @@ async def sell_holding(
     holding.current_price  = data.price
 
     if holding.quantity < 0.00001:  # fully closed (generous threshold for float rounding)
-        db.delete(holding)
+        await db.delete(holding)    # async session: delete() is a coroutine, must be awaited
     
     # Add proceeds to cash
     cash = await get_cash(db, user.id)
@@ -289,6 +290,115 @@ async def capital_increase(
         notes=data.notes,
     )
     db.add(tx)
+    await db.commit()
+    await db.refresh(tx)
+    return tx
+
+
+# ── Fund flow (wallet-style contribute / withdraw) ───────────────────────────
+@router.post("/fund-flow", response_model=TransactionOut, status_code=201)
+async def fund_flow(
+    data: FundFlowRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Add money to / withdraw money from a wallet-style holding (e.g. a Fund)
+    WITHOUT going through the share-buy averaging path.
+
+    A Fund is a wallet: total value = quantity × current_price, total basis =
+    quantity × avg_cost. Moving money here is an INTERNAL cash-wallet move (like
+    BUY/SELL): cash and the holding's value shift by the same amount, so
+    total_value (portfolio + cash) stays flat and TWR/flow analytics are
+    unaffected — only DEPOSIT/WITHDRAW count as external flows. Adding therefore
+    never dilutes the fund's value.
+
+    We compute on the holding's TOTAL value/basis (quantity-aware) and then
+    normalise the position back to quantity=1, so a fund that was previously
+    mangled by the share-buy path (quantity≠1, bogus per-unit price) self-heals
+    into the clean wallet form on the next add/withdraw.
+    """
+    result = await db.execute(
+        select(Holding).where(Holding.id == data.holding_id, Holding.user_id == user.id)
+    )
+    holding = result.scalar_one_or_none()
+    if not holding:
+        raise HTTPException(404, "Holding not found")
+
+    cash  = await get_cash(db, user.id)
+    today = data.tx_date or datetime.utcnow().strftime("%Y-%m-%d")
+
+    qty         = holding.quantity or 1
+    total_value = qty * holding.current_price   # current market value of the position
+    total_basis = qty * holding.avg_cost        # total contributed cost basis
+
+    if data.direction == "ADD":
+        if cash.balance < data.amount:
+            raise HTTPException(
+                400,
+                f"Insufficient cash. Available: {round(cash.balance, 2)} SAR, "
+                f"required: {round(data.amount, 2)} SAR. Deposit funds first."
+            )
+        # Cash → fund value; basis grows by the same amount (pure contribution,
+        # no gain/loss). Normalise to quantity=1.
+        cash.balance          -= data.amount
+        holding.quantity       = 1
+        holding.current_price  = total_value + data.amount
+        holding.avg_cost       = total_basis + data.amount
+
+        tx = Transaction(
+            user_id=user.id,
+            tx_type="BUY",            # internal move; net_flow() ignores it, cost basis sees it
+            asset_name=holding.name,
+            quantity=None,            # wallet contribution — no per-unit quantity
+            price=data.amount,
+            total=data.amount,
+            tx_date=today,
+            notes=data.notes,
+        )
+        db.add(tx)
+        await db.commit()
+        await db.refresh(tx)
+        return tx
+
+    # ── WITHDRAW ─────────────────────────────────────────────────────────────
+    if data.amount > total_value + 1e-6:
+        raise HTTPException(
+            400, f"Cannot withdraw more than the current value of {round(total_value, 2)} SAR"
+        )
+
+    # Proportional cost-basis method (mirrors avg-cost SELL): pull out basis and
+    # gain in the same ratio they exist in the fund today, so realized P&L is
+    # the gain portion of what's withdrawn.
+    fraction      = data.amount / total_value if total_value > 0 else 0.0
+    basis_removed = total_basis * fraction
+    realized_pnl  = data.amount - basis_removed
+    remaining     = total_value - data.amount
+
+    cash.balance          += data.amount
+    holding.quantity       = 1
+    holding.current_price  = remaining
+    holding.avg_cost       = max(total_basis - basis_removed, 0.0)
+
+    tx = Transaction(
+        user_id=user.id,
+        tx_type="SELL",
+        asset_name=holding.name,
+        quantity=None,
+        price=data.amount,
+        total=data.amount,
+        realized_pnl=round(realized_pnl, 2),
+        tx_date=today,
+        notes=data.notes,
+    )
+    db.add(tx)
+
+    # Fully withdrawn (within a rounding halala) → remove the position entirely
+    # so it doesn't linger as a 0-value holding. delete() is a coroutine on the
+    # async session and MUST be awaited, otherwise the row is never removed.
+    if remaining < 0.01:
+        await db.delete(holding)
+
     await db.commit()
     await db.refresh(tx)
     return tx

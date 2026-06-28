@@ -78,14 +78,6 @@ const Transactions = ({ data, onReload }) => {
         <div className="col gap-4">
           <div className="eyebrow">Transactions · Audit trail</div>
           <h1 className="serif" style={{ fontSize: 34, lineHeight: 1 }}>Every move, recorded.</h1>
-          <div className="dim" style={{ fontSize: 13, maxWidth: 540, marginTop: 4 }}>
-            Deleting a transaction here reverses its financial effect — quantities, cash, and avg cost are restored.
-          </div>
-        </div>
-        <div className="row gap-8">
-          <button className="btn">
-            <Icon name="download" size={14} /> Export CSV
-          </button>
         </div>
       </div>
 

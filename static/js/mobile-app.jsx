@@ -94,6 +94,28 @@ function MobileApp({ data, afterAction, onLogout, onRefresh }) {
     }
   };
 
+  // ── Fund flow (wallet-style add / withdraw for Fund holdings) ────────────────
+  const handleFundFlow = async (args) => {
+    try {
+      await mobileApiFetch("/api/portfolio/fund-flow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          holding_id: args.holding.id,
+          amount: parseFloat(args.amount),
+          direction: args.direction,
+          tx_date: new Date().toISOString().slice(0, 10),
+        }),
+      });
+      afterAction(
+        `${args.direction === "ADD" ? "Added" : "Withdrew"} ${parseFloat(args.amount).toLocaleString()} SAR · ${args.holding.name}`
+      );
+      navigate("dashboard");
+    } catch (e) {
+      showToast(e.message);
+    }
+  };
+
   // ── Refresh prices ──────────────────────────────────────────────────────────
   const handleRefresh = async () => {
     try {
@@ -115,6 +137,7 @@ function MobileApp({ data, afterAction, onLogout, onRefresh }) {
         onBack={() => navigate("dashboard")}
         openSell={() => setSheet("sell")}
         openBuy={() => setSheet("buy-more")}
+        openFundFlow={() => setSheet("fund-flow")}
       />
     );
   } else if (route === "analytics") {
@@ -205,6 +228,14 @@ function MobileApp({ data, afterAction, onLogout, onRefresh }) {
           prefill={holding}
           onClose={() => setSheet(null)}
           onSubmit={(args) => { handleBuy(args); setSheet(null); }}
+        />
+      )}
+      {sheet === "fund-flow" && holding && (
+        <MFundFlowSheet
+          holding={holding}
+          data={data}
+          onClose={() => setSheet(null)}
+          onSubmit={(args) => { handleFundFlow(args); setSheet(null); }}
         />
       )}
       {sheet === "sell" && holding && (

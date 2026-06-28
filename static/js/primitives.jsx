@@ -214,7 +214,6 @@ const TopNav = ({ route, setRoute }) => {
 
 // ----- TopBar (search + actions) -----
 const TopBar = ({ onRefresh, lastRefreshed, onSendReport, onOpenChat, onOpenBuy, onOpenDeposit }) => {
-  const [searchOpen, setSearchOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   // Format the ISO timestamp from the backend into a human-readable string
@@ -253,20 +252,6 @@ const TopBar = ({ onRefresh, lastRefreshed, onSendReport, onOpenChat, onOpenBuy,
       background: "var(--paper)",
       position: "sticky", top: 0, zIndex: 30,
     }}>
-      <button className="row gap-8" onClick={() => setSearchOpen(true)} style={{
-        flex: "0 1 320px",
-        padding: "8px 12px",
-        borderRadius: 8,
-        border: "1px solid var(--line)",
-        background: "var(--paper-2)",
-        color: "var(--ink-3)",
-        fontSize: 13,
-      }}>
-        <Icon name="search" size={15} />
-        <span>Search holdings, tickers…</span>
-        <span style={{ marginLeft: "auto" }} className="kbd">⌘K</span>
-      </button>
-
       <div className="grow" />
 
       <button className="pill" onClick={doRefresh} style={{ cursor: "pointer" }}>
@@ -286,9 +271,6 @@ const TopBar = ({ onRefresh, lastRefreshed, onSendReport, onOpenChat, onOpenBuy,
       <button className="btn sm ghost" onClick={onOpenChat} title="Ask Vault AI">
         <Icon name="sparkle" size={15} style={{ color: "var(--accent)" }} />
         Ask Vault
-      </button>
-      <button className="btn sm ghost" title="Notifications" style={{ padding: "6px 8px" }}>
-        <Icon name="bell" size={16} />
       </button>
 
       <style>{`@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }`}</style>

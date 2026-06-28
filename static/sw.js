@@ -1,7 +1,7 @@
 // VAULT — Service Worker
 // Cache-first for static assets, network-first for API calls.
 
-const CACHE = "vault-v4";
+const CACHE = "vault-v5";
 const STATIC = [
   "/",
   "/static/css/design-system.css",
@@ -54,7 +54,26 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // Cache-first for everything else (static assets, HTML shell)
+  // Network-first for HTML navigations so a new app shell (referencing freshly
+  // versioned scripts) always wins; fall back to cache only when offline.
+  // Without this, the cached "/" shell pins old ?v= script URLs and code
+  // changes never reach the browser.
+  if (e.request.mode === "navigate") {
+    e.respondWith(
+      fetch(e.request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE).then((c) => c.put(e.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(e.request).then((c) => c || caches.match("/")))
+    );
+    return;
+  }
+
+  // Cache-first for everything else (versioned static assets)
   e.respondWith(
     caches.match(e.request).then((cached) => {
       if (cached) return cached;

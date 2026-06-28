@@ -292,32 +292,127 @@ const MDepositSheet = ({ onClose, onSubmit, kind = "deposit" }) => {
           ))}
         </div>
 
-        <div className="eyebrow" style={{ marginTop: 18, marginBottom: 6 }}>From</div>
-        <div className="m-card" style={{ padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 38, height: 38, borderRadius: 10, background: "var(--accent-soft)", color: "var(--accent-ink)", display: "grid", placeItems: "center", fontFamily: "Instrument Serif", fontWeight: 600 }}>SR</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>Al Rajhi · ••8421</div>
-            <div className="ticker">Checking · default source</div>
-          </div>
-          <MIcon name="chevDown" size={14} color="var(--ink-3)" />
-        </div>
-
-        <div style={{
-          marginTop: 14, padding: 12,
-          background: "var(--accent-soft)", borderRadius: 10,
-          fontSize: 12, color: "var(--accent-ink)",
-          display: "flex", gap: 8, alignItems: "flex-start",
-        }}>
-          <MIcon name="info" size={14} style={{ marginTop: 1, flexShrink: 0 }} />
-          <span>Funds settle instantly to your cash wallet. {isDeposit ? "All future buys deduct from this balance." : "Withdrawal will reduce buying power."}</span>
-        </div>
-
         <button onClick={() => { onSubmit && onSubmit(amount); onClose(); }} className="m-btn primary full" style={{ marginTop: 16 }}>
           {isDeposit ? `Deposit ${parseFloat(amount).toLocaleString()} SAR` : `Withdraw ${parseFloat(amount).toLocaleString()} SAR`}
         </button>
-        <div style={{ textAlign: "center", marginTop: 10, fontSize: 11, color: "var(--ink-3)" }}>
-          Confirm with Face ID
+      </div>
+    </MSheet>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────
+// FUND FLOW — wallet-style add / withdraw for Fund holdings.
+// A Fund is stored as quantity=1, where current_price = total value. Moving
+// money here goes through /api/portfolio/fund-flow (an internal cash move),
+// NOT the share-buy path that would dilute the value. See web FundFlowModal.
+// ─────────────────────────────────────────────────────────────
+const MFundFlowSheet = ({ holding, data, onClose, onSubmit }) => {
+  const h = holding;
+  const [direction, setDirection] = useState("ADD");
+  const [amount, setAmount] = useState("");
+  const isAdd   = direction === "ADD";
+  const value   = (h.quantity || 1) * (h.current_price || 0);   // total market value
+  const cash    = data?.summary?.cash_balance || 0;
+  const n       = parseFloat(amount) || 0;
+  const newValue = isAdd ? value + n : value - n;
+  const overCash = isAdd && n > cash;
+  const overVal  = !isAdd && n > value;
+  const valid    = n > 0 && !overCash && !overVal;
+  const quickAmounts = [500, 1000, 5000, 10000];
+
+  const seg = (dir, label) => (
+    <button key={dir} onClick={() => setDirection(dir)}
+            style={{
+              flex: 1, justifyContent: "center", padding: "10px 0", fontSize: 13,
+              borderRadius: 10,
+              background: direction === dir ? "var(--accent-soft)" : "transparent",
+              color: direction === dir ? "var(--accent-ink)" : "var(--ink-2)",
+              border: direction === dir ? "1px solid var(--accent)" : "1px solid var(--line)",
+            }}>
+      {label}
+    </button>
+  );
+
+  return (
+    <MSheet onClose={onClose}>
+      <div style={{ padding: "8px 18px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+        <div className="serif" style={{ fontSize: 24, flex: 1 }}>{isAdd ? "Add to fund" : "Withdraw from fund"}</div>
+        <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, display: "grid", placeItems: "center", color: "var(--ink-2)" }}>
+          <MIcon name="close" size={16} />
+        </button>
+      </div>
+      <div style={{ padding: "0 18px 28px" }}>
+        <div className="m-card" style={{ padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: "var(--paper-2)", display: "grid", placeItems: "center", fontFamily: "Instrument Serif", fontSize: 18 }}>{h.name[0]}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{h.name}</div>
+            <div className="ticker">Current value {F.SAR(value, 2)} SAR</div>
+          </div>
         </div>
+
+        <div style={{ display: "flex", gap: 6, marginTop: 14 }}>
+          {seg("ADD", "Add money")}
+          {seg("WITHDRAW", "Withdraw")}
+        </div>
+
+        <div className="eyebrow" style={{ marginTop: 16, marginBottom: 6 }}>Amount</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "20px 16px", borderRadius: 14, border: "1px solid var(--line)", background: "var(--paper)" }}>
+          <span className="eyebrow">SAR</span>
+          <input value={amount} onChange={e => setAmount(e.target.value)} inputMode="decimal" placeholder="0" style={{
+            flex: 1, border: 0, outline: 0, background: "transparent",
+            fontFamily: "Instrument Serif", fontSize: 44, color: "var(--ink)",
+            fontVariantNumeric: "tabular-nums",
+          }} />
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 10 }}>
+          {quickAmounts.map(a => (
+            <button key={a} className="m-pill" onClick={() => setAmount(String(a))} style={{ justifyContent: "center", padding: "8px 0", fontSize: 12 }}>
+              {a.toLocaleString()}
+            </button>
+          ))}
+        </div>
+
+        {!isAdd && value > 0 && (
+          <button onClick={() => setAmount(String(value))} className="m-pill" style={{ marginTop: 8, width: "100%", justifyContent: "center", padding: "9px 0", fontSize: 12.5, color: "var(--accent-ink)" }}>
+            Withdraw all · {F.SAR(value, 2)} SAR
+          </button>
+        )}
+
+        {!isAdd && value > 0 && n >= value && (
+          <div style={{ marginTop: 10, fontSize: 12, color: "var(--accent-ink)" }}>
+            This empties the fund — the holding will be removed.
+          </div>
+        )}
+
+        {n > 0 && (
+          <div className="m-card" style={{ padding: 14, marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+              <span style={{ color: "var(--ink-2)" }}>Fund value</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{F.SAR(value, 2)} → {F.SAR(newValue >= 0 ? newValue : 0, 2)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+              <span style={{ color: "var(--ink-2)" }}>Cash wallet</span>
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{F.SAR(cash, 2)} → {F.SAR(isAdd ? cash - n : cash + n, 2)}</span>
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginTop: 14, padding: 12, background: "var(--accent-soft)", borderRadius: 10, fontSize: 12, color: "var(--accent-ink)", display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <MIcon name="info" size={14} style={{ marginTop: 1, flexShrink: 0 }} />
+          <span>{isAdd
+            ? "Moves cash into the fund — no gain or loss is booked and your total value is unchanged."
+            : "Moves value back to cash. Any gain on the withdrawn portion is realized."}</span>
+        </div>
+
+        {overCash && <div style={{ marginTop: 10, fontSize: 12, color: "var(--loss)" }}>Not enough cash — deposit funds first.</div>}
+        {overVal  && <div style={{ marginTop: 10, fontSize: 12, color: "var(--loss)" }}>Can't withdraw more than the fund's value.</div>}
+
+        <button disabled={!valid}
+                onClick={() => { if (!valid) return; onSubmit && onSubmit({ holding: h, amount: n, direction }); onClose(); }}
+                className="m-btn primary full" style={{ marginTop: 16, opacity: valid ? 1 : 0.5 }}>
+          {isAdd ? `Add ${n ? n.toLocaleString() : ""} SAR` : `Withdraw ${n ? n.toLocaleString() : ""} SAR`}
+        </button>
       </div>
     </MSheet>
   );
@@ -840,4 +935,4 @@ const MOCRSheet = ({ data, onClose, onBuy, onSell }) => {
   );
 };
 
-Object.assign(window, { MSheet, MBuySheet, MDepositSheet, MAskSheet, MSellSheet });
+Object.assign(window, { MSheet, MBuySheet, MDepositSheet, MAskSheet, MSellSheet, MFundFlowSheet });

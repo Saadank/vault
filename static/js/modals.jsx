@@ -348,12 +348,6 @@ const BuyModal = ({ open, onClose, onConfirm, cashBalance }) => {
             </div>
           </div>
 
-          {assetType === "Fund" && (
-            <div style={{ padding: "8px 12px", background: "var(--accent-soft)", border: "1px solid var(--line)", borderRadius: 8, fontSize: 12, color: "var(--ink-2)", lineHeight: 1.5 }}>
-              <strong style={{ color: "var(--accent-ink)" }}>Fund tracking tip:</strong> Set Quantity to <strong>1</strong> and Price to your <strong>total invested amount</strong>. You can update the current value later as the fund reports new prices.
-            </div>
-          )}
-
           {apiError && (
             <div style={{ padding: "8px 12px", background: "var(--loss-soft)", border: "1px solid var(--loss)", borderRadius: 8, color: "var(--loss)", fontSize: 12.5 }}>
               {apiError}
@@ -992,4 +986,164 @@ const UpdatePriceModal = ({ open, onClose, holding, onConfirm }) => {
   );
 };
 
-Object.assign(window, { Modal, BuyModal, SellModal, CapitalIncreaseModal, CashModal, ChatDrawer, UpdatePriceModal });
+// ---- Fund Flow (wallet-style add / withdraw for Fund holdings) ----
+// A Fund is stored as quantity=1, where current_price = total value and
+// avg_cost = total contributed basis. Adding/withdrawing money moves it between
+// the cash wallet and the fund value WITHOUT the share-buy averaging that would
+// otherwise crater the value. See POST /api/portfolio/fund-flow.
+const FundFlowModal = ({ open, onClose, holding, cashBalance = 0, onConfirm }) => {
+  const [direction, setDirection] = React.useState("ADD");
+  const [amount, setAmount]       = React.useState("");
+  const [date, setDate]           = React.useState(new Date().toISOString().slice(0, 10));
+  const [notes, setNotes]         = React.useState("");
+  const [submitting, setSubmitting] = React.useState(false);
+  const [apiError, setApiError]   = React.useState("");
+
+  React.useEffect(() => {
+    if (open) {
+      setDirection("ADD"); setAmount(""); setNotes(""); setApiError("");
+      setDate(new Date().toISOString().slice(0, 10));
+    }
+  }, [open]);
+
+  if (!holding) return null;
+
+  const fmt      = VAULT_DATA.fmt;
+  const isAdd    = direction === "ADD";
+  const value    = (holding.quantity || 1) * (holding.current_price || 0);   // total market value
+  const n        = parseFloat(amount) || 0;
+  const newValue = isAdd ? value + n : value - n;
+  const overCash = isAdd && n > cashBalance;
+  const overVal  = !isAdd && n > value;
+  const valid    = n > 0 && !overCash && !overVal && !submitting;
+
+  const handleConfirm = async () => {
+    setSubmitting(true);
+    setApiError("");
+    try {
+      const r = await fetch("/api/portfolio/fund-flow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          holding_id: holding.id, amount: n, direction,
+          tx_date: date, notes: notes || null,
+        }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.detail || "Fund update failed");
+      }
+      onConfirm && onConfirm({ holding, direction, amount: n, newValue });
+      onClose();
+    } catch (err) {
+      setApiError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const segBtn = (dir, label) => (
+    <button onClick={() => setDirection(dir)}
+            style={{
+              flex: 1, padding: "8px 0", fontSize: 12.5, fontWeight: 500,
+              borderRadius: 7, textAlign: "center",
+              background: direction === dir ? "var(--accent-soft)" : "transparent",
+              color: direction === dir ? "var(--accent-ink)" : "var(--ink-2)",
+              border: direction === dir ? "1px solid var(--accent)" : "1px solid transparent",
+            }}>
+      {label}
+    </button>
+  );
+
+  return (
+    <Modal open={open} onClose={onClose}
+           eyebrow={`Fund · ${holding.name}`}
+           title={isAdd ? "Add money to fund" : "Withdraw from fund"}
+           footer={(
+             <div className="row between">
+               <div className="col" style={{ fontSize: 12 }}>
+                 <div className="dim">New fund value</div>
+                 <div className="serif num" style={{ fontSize: 22, lineHeight: 1.1 }}>
+                   {fmt.SAR(newValue >= 0 ? newValue : 0, { decimals: 2 })}
+                   <span style={{ fontFamily: "Geist", fontSize: 11, color: "var(--ink-2)", marginLeft: 6 }}>SAR</span>
+                 </div>
+               </div>
+               <div className="row gap-8">
+                 <button className="btn" onClick={onClose}>Cancel</button>
+                 <button className="btn gold" disabled={!valid} onClick={handleConfirm}>
+                   {submitting ? <span className="dots"><span></span><span></span><span></span></span> : (isAdd ? "Add" : "Withdraw")}
+                 </button>
+               </div>
+             </div>
+           )}>
+      <div className="col gap-16">
+        <div className="row gap-6" style={{ padding: 4, background: "var(--paper-2)", border: "1px solid var(--line)", borderRadius: 9 }}>
+          {segBtn("ADD", "Add money")}
+          {segBtn("WITHDRAW", "Withdraw")}
+        </div>
+
+        <div className="col gap-6">
+          <div className="row between" style={{ alignItems: "baseline" }}>
+            <label className="label">Amount (SAR)</label>
+            {!isAdd && value > 0 && (
+              <button onClick={() => setAmount(String(value))}
+                      style={{ fontSize: 11.5, color: "var(--accent-ink)", fontWeight: 500 }}>
+                Withdraw all
+              </button>
+            )}
+          </div>
+          <input className="input num" inputMode="decimal" autoFocus
+                 value={amount} onChange={e => setAmount(e.target.value)}
+                 placeholder="e.g. 750" />
+          <div className="dim" style={{ fontSize: 11.5 }}>
+            {isAdd
+              ? <>Cash available: <span className="num">{fmt.SAR(cashBalance, { decimals: 2 })} SAR</span></>
+              : <>Current fund value: <span className="num">{fmt.SAR(value, { decimals: 2 })} SAR</span></>}
+          </div>
+          {overCash && <div className="dim" style={{ fontSize: 11.5, color: "var(--loss)" }}>Not enough cash — deposit funds first.</div>}
+          {overVal  && <div className="dim" style={{ fontSize: 11.5, color: "var(--loss)" }}>Can't withdraw more than the fund's value.</div>}
+          {!isAdd && value > 0 && parseFloat(amount) >= value && (
+            <div className="dim" style={{ fontSize: 11.5, color: "var(--accent-ink)" }}>This empties the fund — the holding will be removed.</div>
+          )}
+        </div>
+
+        <div className="col gap-8" style={{ padding: 14, borderRadius: 10, background: "var(--paper-2)", border: "1px solid var(--line)" }}>
+          <div className="row between">
+            <span className="dim">Fund value</span>
+            <span className="num">{fmt.SAR(value, { decimals: 2 })} → <strong>{fmt.SAR(newValue >= 0 ? newValue : 0, { decimals: 2 })}</strong> SAR</span>
+          </div>
+          <div className="row between">
+            <span className="dim">Cash wallet</span>
+            <span className="num">{fmt.SAR(cashBalance, { decimals: 2 })} → <strong>{fmt.SAR((isAdd ? cashBalance - n : cashBalance + n), { decimals: 2 })}</strong> SAR</span>
+          </div>
+          <div className="hairline" />
+          <div className="dim" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+            {isAdd
+              ? "Contributing moves cash into the fund — no gain or loss is booked, and your total value is unchanged."
+              : "Withdrawing moves value back to cash. Any gain on the withdrawn portion is booked as realized P&L."}
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="col">
+            <label className="label">Date</label>
+            <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+          </div>
+          <div className="col">
+            <label className="label">Notes (optional)</label>
+            <input className="input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Monthly top-up…" />
+          </div>
+        </div>
+
+        {apiError && (
+          <div style={{ padding: "8px 12px", background: "var(--loss-soft)", border: "1px solid var(--loss)", borderRadius: 8, color: "var(--loss)", fontSize: 12.5 }}>
+            {apiError}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+};
+
+Object.assign(window, { Modal, BuyModal, SellModal, CapitalIncreaseModal, CashModal, ChatDrawer, UpdatePriceModal, FundFlowModal });

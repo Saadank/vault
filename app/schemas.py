@@ -89,6 +89,15 @@ class CapitalIncreaseRequest(BaseModel):
     notes:      Optional[str] = None
 
 
+class FundFlowRequest(BaseModel):
+    """Contribute to / withdraw from a wallet-style holding (e.g. a Fund)."""
+    holding_id: int
+    amount:     float = Field(..., gt=0)
+    direction:  str   = Field(..., pattern="^(ADD|WITHDRAW)$")
+    tx_date:    Optional[str] = None
+    notes:      Optional[str] = None
+
+
 class TransactionOut(BaseModel):
     id:           int
     tx_type:      str

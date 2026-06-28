@@ -432,7 +432,7 @@ const MDashboard = ({ data, tweaks, navigate, openHolding, openBuy, openDeposit,
 // ─────────────────────────────────────────────────────────────
 // HOLDING DETAIL
 // ─────────────────────────────────────────────────────────────
-const MHoldingDetail = ({ data, tweaks, holding, onBack, openSell, openBuy }) => {
+const MHoldingDetail = ({ data, tweaks, holding, onBack, openSell, openBuy, openFundFlow }) => {
   const h = holding;
   const hidden = !!tweaks.privacy;
   const [range, setRange] = useState("1M");
@@ -583,12 +583,20 @@ const MHoldingDetail = ({ data, tweaks, holding, onBack, openSell, openBuy }) =>
         background: "linear-gradient(to top, var(--bg) 70%, transparent)",
         zIndex: 10,
       }}>
-        <button className="m-btn" style={{ flex: 1 }} onClick={openSell}>
-          <MIcon name="arrowUpRight" size={15} /> Sell
-        </button>
-        <button className="m-btn gold" style={{ flex: 1.5 }} onClick={openBuy}>
-          <MIcon name="plus" size={15} /> Buy more
-        </button>
+        {h.asset_type === "Fund" ? (
+          <button className="m-btn gold" style={{ flex: 1 }} onClick={openFundFlow}>
+            <MIcon name="plus" size={15} /> Add / Withdraw
+          </button>
+        ) : (
+          <>
+            <button className="m-btn" style={{ flex: 1 }} onClick={openSell}>
+              <MIcon name="arrowUpRight" size={15} /> Sell
+            </button>
+            <button className="m-btn gold" style={{ flex: 1.5 }} onClick={openBuy}>
+              <MIcon name="plus" size={15} /> Buy more
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -946,11 +954,6 @@ const MTransactions = ({ data, tweaks }) => {
             </div>
           </div>
         ))}
-        <div style={{ padding: "8px 20px 12px", textAlign: "center" }}>
-          <button className="m-btn sm" style={{ background: "transparent" }}>
-            <MIcon name="download" size={13} /> Export CSV
-          </button>
-        </div>
       </div>
     </div>
   );

@@ -67,9 +67,6 @@ const Analytics = ({ data, onSendReport }) => {
           </div>
         </div>
         <div className="row gap-8">
-          <button className="btn">
-            <Icon name="download" size={14} /> Export PDF
-          </button>
           <button className="btn gold" onClick={onSendReport}>
             <Icon name="mail" size={14} /> Send full report
           </button>
@@ -218,19 +215,6 @@ const Analytics = ({ data, onSendReport }) => {
               </div>
             );
           })()}
-
-          {/* Metric disambiguation note */}
-          <div className="dim" style={{ fontSize: 11.5, marginTop: 16, padding: "12px 16px", background: "var(--paper-2)", borderLeft: "2px solid var(--gold)" }}>
-            <strong style={{ color: "var(--text)" }}>These four numbers answer different questions — do not sum them.</strong>
-            {" "}TWR % measures growth per riyal invested regardless of deposit size or timing.
-            Net P&L measures total SAR result. They can point in opposite directions (e.g. TWR negative while Net P&L is positive)
-            when large deposits arrived just before a market dip — that's correct, not a bug.
-            {performance.geo_heuristic && (
-              <span style={{ display: "block", marginTop: 8, color: "var(--muted)" }}>
-                ⚠ Geography &amp; currency breakdowns elsewhere in this page are inferred from ticker suffixes, not real DB fields — treat as approximate.
-              </span>
-            )}
-          </div>
         </Section>
       )}
 

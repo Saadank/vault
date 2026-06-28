@@ -1,6 +1,6 @@
 // Dashboard screen — KPI strip, chart, holdings table, cash card
 
-const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePrice, openBuy, openDeposit, openWithdraw, openChat, onSendReport }) => {
+const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePrice, openFundFlow, openBuy, openDeposit, openWithdraw, openChat, onSendReport }) => {
   const { summary, holdings, chart, fmt } = data;
   const [range, setRange] = React.useState("1M");
   const [hoverPt, setHoverPt] = React.useState(null);
@@ -138,9 +138,6 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
               <div className="dim" style={{ fontSize: 12 }}>Hover a row to act on it · Live prices via Yahoo Finance</div>
             </div>
             <div className="row gap-8">
-              <button className="btn sm">
-                <Icon name="download" size={13} /> Export CSV
-              </button>
               <button className="btn sm gold" onClick={openBuy}>
                 <Icon name="plus" size={13} /> Buy
               </button>
@@ -207,10 +204,14 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
                       </td>
                       <td style={{ position: "relative", width: 0, padding: 0 }}>
                         <div className="row-actions" style={{ justifyContent: "flex-end" }}>
-                          {h.asset_type === "Fund" && (
-                            <button className="btn xs gold" onClick={() => openUpdatePrice(h)}>Update value</button>
+                          {h.asset_type === "Fund" ? (
+                            <>
+                              <button className="btn xs gold" onClick={() => openFundFlow(h)}>Add / Withdraw</button>
+                              <button className="btn xs" onClick={() => openUpdatePrice(h)}>Update value</button>
+                            </>
+                          ) : (
+                            <button className="btn xs" onClick={() => openSell(h)}>Sell</button>
                           )}
-                          <button className="btn xs" onClick={() => openSell(h)}>Sell</button>
                           <button className="btn xs ghost" onClick={() => setRowMenu(rowMenu === h.id ? null : h.id)} style={{ padding: "4px 6px", position: "relative" }}>
                             <Icon name="dots" size={14} />
                             {rowMenu === h.id && (

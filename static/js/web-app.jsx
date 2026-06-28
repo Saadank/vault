@@ -20,6 +20,7 @@ function WebApp() {
   const [sellHolding, setSellHolding] = React.useState(null);
   const [capIncHolding, setCapIncHolding] = React.useState(null);
   const [updatePriceHolding, setUpdatePriceHolding] = React.useState(null);
+  const [fundFlowHolding, setFundFlowHolding] = React.useState(null);
   const [cashKind, setCashKind] = React.useState(null);
   const [chatOpen, setChatOpen] = React.useState(false);
   const [reportOpen, setReportOpen] = React.useState(false);
@@ -170,6 +171,7 @@ function WebApp() {
                 openSell={(h) => setSellHolding(h)}
                 openCapInc={(h) => setCapIncHolding(h)}
                 openUpdatePrice={(h) => setUpdatePriceHolding(h)}
+                openFundFlow={(h) => setFundFlowHolding(h)}
                 openBuy={() => setBuyOpen(true)}
                 openDeposit={() => setCashKind("deposit")}
                 openWithdraw={() => setCashKind("withdraw")}
@@ -222,6 +224,15 @@ function WebApp() {
         holding={updatePriceHolding}
         onClose={() => setUpdatePriceHolding(null)}
         onConfirm={(args) => afterAction(`Updated ${args.holding.name} → ${data.fmt.SAR(args.newPrice, { decimals: 2 })} SAR`)}
+      />
+      <FundFlowModal
+        open={!!fundFlowHolding}
+        holding={fundFlowHolding}
+        cashBalance={data.summary.cash_balance}
+        onClose={() => setFundFlowHolding(null)}
+        onConfirm={(args) => afterAction(
+          `${args.direction === "ADD" ? "Added" : "Withdrew"} ${data.fmt.SAR(args.amount, { decimals: 2 })} SAR · ${args.holding.name} → ${data.fmt.SAR(args.newValue, { decimals: 2 })} SAR`
+        )}
       />
       <ChatDrawer
         open={chatOpen}

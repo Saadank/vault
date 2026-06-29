@@ -23,6 +23,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/prices", tags=["prices"])
 
 
+# Yahoo's quoteType vocabulary → the app's own asset_type vocabulary.
+# Stored on the holding, so it must match the words used everywhere else
+# (TypeChip colors, filter pills, fetchable_types in _refresh_holding_prices).
+_TYPE_MAP = {
+    "EQUITY": "Stock",
+    "ETF": "ETF",
+    "MUTUALFUND": "Fund",
+    "CRYPTOCURRENCY": "Crypto",
+    "CURRENCY": "Crypto",
+    "INDEX": "Stock",
+    "FUTURE": "Stock",
+    "OPTION": "Stock",
+}
+
+
+def _normalize_type(quote_type: str) -> str:
+    """Map a Yahoo quoteType to the app's asset_type; default to Stock."""
+    return _TYPE_MAP.get((quote_type or "").upper(), "Stock")
+
+
 # ── Ticker search (fast — no price fetching, results only) ────────────────────
 @router.get("/search")
 async def search_ticker(
@@ -55,7 +75,7 @@ async def search_ticker(
                         "symbol": sym,
                         "name": item.get("longname") or item.get("shortname") or sym,
                         "exchange": item.get("exchange", ""),
-                        "type": item.get("quoteType", ""),
+                        "type": _normalize_type(item.get("quoteType", "")),
                         "currency": item.get("currency", ""),
                     })
             except Exception:
@@ -91,7 +111,7 @@ async def search_ticker(
                             "symbol": sym,
                             "name": name,
                             "exchange": exch,
-                            "type": getattr(fi, "quote_type", ""),
+                            "type": _normalize_type(getattr(fi, "quote_type", "")),
                             "currency": getattr(fi, "currency", ""),
                         })
                 except Exception:
@@ -294,7 +314,9 @@ async def _refresh_holding_prices(db: AsyncSession, user_id: int) -> dict:
     result = await db.execute(select(Holding).where(Holding.user_id == user_id))
     holdings = result.scalars().all()
 
-    fetchable_types = {"stock", "etf", "crypto"}
+    # "equity"/"cryptocurrency" tolerated in case a raw Yahoo quoteType ever
+    # reaches the DB un-normalized — otherwise the holding's price silently freezes.
+    fetchable_types = {"stock", "etf", "crypto", "equity", "cryptocurrency"}
     to_fetch = [
         (h.ticker or h.name, h.asset_type)
         for h in holdings

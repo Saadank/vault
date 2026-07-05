@@ -121,13 +121,20 @@
       day_change_pct: 0,
     };
 
-    // Derive day-change from the last two chart points if available
-    // chartRaw is already a flat array (points extracted above)
+    // Derive "today's change" as latest value vs the previous session's close.
+    // (Comparing the last two hourly snapshots gave a near-zero number that
+    //  looked static — an hourly gap is tiny. Anchor to the prior day instead.)
     if (Array.isArray(chartRaw) && chartRaw.length >= 2) {
-      const prev = chartRaw[chartRaw.length - 2]?.value || 0;
-      const curr = chartRaw[chartRaw.length - 1]?.value || summary.total_value;
-      summary.day_change_sar = curr - prev;
-      summary.day_change_pct = prev > 0 ? ((curr - prev) / prev) * 100 : 0;
+      const lastPt  = chartRaw[chartRaw.length - 1];
+      const curr    = lastPt?.value || summary.total_value;
+      const currDay = String(lastPt?.date || "").slice(0, 10);
+      let baseline  = null;
+      for (let i = chartRaw.length - 2; i >= 0; i--) {
+        if (String(chartRaw[i].date).slice(0, 10) < currDay) { baseline = chartRaw[i].value; break; }
+      }
+      if (baseline == null) baseline = chartRaw[0]?.value || 0;   // all same day → first point of the day
+      summary.day_change_sar = curr - baseline;
+      summary.day_change_pct = baseline > 0 ? ((curr - baseline) / baseline) * 100 : 0;
     }
 
     // ── Chart: use real snapshots; generate minimal fallback if empty ─────────

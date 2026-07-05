@@ -44,6 +44,13 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
   const rangeChange = (showPt?.value || 0) - (firstPt?.value || 0);
   const rangeChangePct = firstPt ? (rangeChange / firstPt.value) * 100 : 0;
 
+  // Lowest / highest value within the selected range
+  const { rangeLow, rangeHigh } = React.useMemo(() => {
+    if (!filteredChart.length) return { rangeLow: 0, rangeHigh: 0 };
+    const vals = filteredChart.map(p => p.value);
+    return { rangeLow: Math.min(...vals), rangeHigh: Math.max(...vals) };
+  }, [filteredChart]);
+
   return (
     <div className="col gap-24" style={{ padding: "24px 28px 40px", maxWidth: 1480, margin: "0 auto" }}>
       {/* Page header */}
@@ -83,6 +90,10 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
               <span className="mono">{showPt.date}</span>
               <span>·</span>
               <span>{range} change <Delta className="" value={rangeChangePct} suffix="%" /></span>
+              <span>·</span>
+              <span>{range} low <span style={{ color: "var(--ink-2)" }}>{fmt.SAR(rangeLow, { decimals: 0 })}</span></span>
+              <span>·</span>
+              <span>{range} high <span style={{ color: "var(--ink-2)" }}>{fmt.SAR(rangeHigh, { decimals: 0 })}</span></span>
               <span>·</span>
               <span>≈ ${fmt.USD(showPt.value / 3.75)} USD</span>
             </div>

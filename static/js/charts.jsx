@@ -50,10 +50,25 @@ const AreaChart = ({ data, height = 280, accent = "var(--accent)", showAxes = tr
     if (v >= 1e3) return Math.round(v / 1e3) + "K";
     return Math.round(v).toString();
   };
-  const fmtDate = (s, range = "long") => {
-    const d = new Date(s);
-    if (isNaN(d.getTime())) return s;
-    return d.toLocaleDateString("en-US", range === "short" ? { month: "short", day: "numeric" } : { month: "short", year: "2-digit" });
+  // Snapshot dates look like "2026-04-23 08" or "2026-04-23" — parse both.
+  // (new Date("2026-04-23T08") is invalid: ISO needs HH:mm, so parse by hand.)
+  const parseDate = s => {
+    const m = String(s).match(/(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}))?/);
+    if (!m) return null;
+    return new Date(+m[1], +m[2] - 1, +m[3], m[4] ? +m[4] : 0);
+  };
+  // Choose axis label resolution from the total span of the data.
+  const spanDays = (() => {
+    const a = parseDate(data[0].date), b = parseDate(data[data.length - 1].date);
+    return a && b ? (b - a) / 86400000 : 999;
+  })();
+  const fmtDate = s => {
+    const d = parseDate(s);
+    if (!d) return String(s).slice(5);                       // fallback: drop the year
+    if (spanDays <= 2)  return d.toLocaleTimeString("en-US", { hour: "numeric" });          // intraday → "8 AM"
+    const opts = spanDays > 365 ? { month: "short", day: "numeric", year: "2-digit" }
+                                : { month: "short", day: "numeric" };                        // "Apr 23"
+    return d.toLocaleDateString("en-US", opts);
   };
 
   const handleMove = e => {
@@ -95,10 +110,11 @@ const AreaChart = ({ data, height = 280, accent = "var(--accent)", showAxes = tr
             {fmtMoney(v)}
           </text>
         ))}
-        {showAxes && xLabels.map(i => (
-          <text key={"xt" + i} x={x(i)} y={height - 8} textAnchor="middle"
+        {showAxes && xLabels.map((i, idx) => (
+          <text key={"xt" + i} x={x(i)} y={height - 8}
+                textAnchor={idx === 0 ? "start" : idx === xLabels.length - 1 ? "end" : "middle"}
                 style={{ fontFamily: "Geist Mono, monospace", fontSize: 10, fill: "var(--ink-3)" }}>
-            {fmtDate(data[i].date, data.length > 60 ? "long" : "short")}
+            {fmtDate(data[i].date)}
           </text>
         ))}
         {/* area + line */}
@@ -116,25 +132,36 @@ const AreaChart = ({ data, height = 280, accent = "var(--accent)", showAxes = tr
         <circle cx={x(data.length - 1)} cy={y(last.value)} r="7" fill={accent} fillOpacity="0.18" />
       </svg>
 
-      {hoverIdx != null && (
-        <div style={{
-          position: "absolute",
-          left: Math.min(w - 200, Math.max(8, ((hoverIdx / (data.length - 1)) * innerW) + padL - 100)),
-          top: 8,
-          background: "var(--ink)", color: "#f5efe0",
-          padding: "8px 12px", borderRadius: 8,
-          fontSize: 12, lineHeight: 1.4,
-          pointerEvents: "none",
-          boxShadow: "var(--shadow-md)",
-          fontVariantNumeric: "tabular-nums",
-        }}>
-          <div style={{ opacity: 0.6, fontSize: 11, fontFamily: "Geist Mono, monospace" }}>{data[hoverIdx].date}</div>
-          <div style={{ fontFamily: "Instrument Serif, serif", fontSize: 20, lineHeight: 1.1, marginTop: 2 }}>
-            {VAULT_DATA.fmt.SAR(data[hoverIdx].value, { decimals: 0 })}
-            <span style={{ fontFamily: "Geist", fontSize: 11, marginLeft: 4, opacity: 0.6 }}>SAR</span>
+      {hoverIdx != null && (() => {
+        // Anchor the tooltip to the hovered point: centered on the crosshair
+        // and floating just above the marker (drops below near the top edge).
+        const px = x(hoverIdx);
+        const py = y(data[hoverIdx].value);
+        const HALF = 80;                                        // ~half tooltip width, for edge clamping
+        const cx = Math.max(HALF + 4, Math.min(w - HALF - 4, px));
+        const placeBelow = py < 74;                             // not enough room above → drop below
+        return (
+          <div style={{
+            position: "absolute",
+            left: cx,
+            top: placeBelow ? py + 14 : py - 14,
+            transform: placeBelow ? "translate(-50%, 0)" : "translate(-50%, -100%)",
+            background: "var(--ink)", color: "#f5efe0",
+            padding: "8px 12px", borderRadius: 8,
+            fontSize: 12, lineHeight: 1.4,
+            pointerEvents: "none",
+            boxShadow: "var(--shadow-md)",
+            fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
+          }}>
+            <div style={{ opacity: 0.6, fontSize: 11, fontFamily: "Geist Mono, monospace" }}>{data[hoverIdx].date}</div>
+            <div style={{ fontFamily: "Instrument Serif, serif", fontSize: 20, lineHeight: 1.1, marginTop: 2 }}>
+              {VAULT_DATA.fmt.SAR(data[hoverIdx].value, { decimals: 0 })}
+              <span style={{ fontFamily: "Geist", fontSize: 11, marginLeft: 4, opacity: 0.6 }}>SAR</span>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

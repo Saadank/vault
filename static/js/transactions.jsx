@@ -214,15 +214,25 @@ const Transactions = ({ data, onReload }) => {
                 This isn't just a deletion. The financial effect will be fully reversed:
               </div>
               <ul className="col gap-6" style={{ paddingLeft: 18, marginTop: 12, fontSize: 13 }}>
-                {pendingDelete.tx_type === "BUY" && (
+                {pendingDelete.tx_type === "BUY" && pendingDelete.quantity ? (
                   <>
                     <li>Holding quantity reduced by {pendingDelete.quantity}</li>
                     <li>{fmt.SAR(pendingDelete.total, { decimals: 2 })} SAR returned to cash</li>
                   </>
+                ) : pendingDelete.tx_type === "BUY" && (
+                  <>
+                    <li>{fmt.SAR(pendingDelete.total, { decimals: 2 })} SAR contribution removed from {pendingDelete.asset_name}</li>
+                    <li>{fmt.SAR(pendingDelete.total, { decimals: 2 })} SAR returned to cash</li>
+                  </>
                 )}
-                {pendingDelete.tx_type === "SELL" && (
+                {pendingDelete.tx_type === "SELL" && pendingDelete.quantity ? (
                   <>
                     <li>Holding quantity restored ({pendingDelete.quantity} units)</li>
+                    <li>{fmt.SAR(pendingDelete.total, { decimals: 2 })} SAR removed from cash</li>
+                  </>
+                ) : pendingDelete.tx_type === "SELL" && (
+                  <>
+                    <li>{fmt.SAR(pendingDelete.total, { decimals: 2 })} SAR restored to {pendingDelete.asset_name}</li>
                     <li>{fmt.SAR(pendingDelete.total, { decimals: 2 })} SAR removed from cash</li>
                   </>
                 )}

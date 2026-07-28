@@ -159,6 +159,28 @@ async def delete_transaction(
         cash.balance += tx.total
         reversal_detail += f", returned {tx.total:.2f} SAR to cash"
 
+    # ── Fund-flow ADD reversal (wallet-style BUY; no per-unit quantity) ────────
+    # Created by /portfolio/fund-flow with direction=ADD: cash moved into a
+    # Fund holding's value/basis without going through the share-buy path.
+    elif tx.tx_type == "BUY" and tx.asset_name and not tx.quantity:
+        holding_result = await db.execute(
+            select(Holding).where(
+                Holding.user_id == user.id,
+                Holding.name == tx.asset_name,
+            )
+        )
+        holding = holding_result.scalar_one_or_none()
+
+        cash = await get_or_create_cash(db, user.id)
+        cash.balance += tx.total
+
+        if holding:
+            holding.current_price = max(holding.current_price - tx.total, 0)
+            holding.avg_cost      = max(holding.avg_cost - tx.total, 0)
+            reversal_detail = f"Removed {tx.total:.2f} SAR contribution from {tx.asset_name}, returned to cash"
+        else:
+            reversal_detail = f"Holding {tx.asset_name} not found; returned {tx.total:.2f} SAR to cash"
+
     # ── SELL reversal ─────────────────────────────────────────────────────────
     elif tx.tx_type == "SELL" and tx.asset_name and tx.quantity and tx.price:
         proceeds = tx.total  # what was added to cash at sell time
@@ -208,6 +230,42 @@ async def delete_transaction(
             db.add(new_holding)
 
         reversal_detail = f"Restored {tx.quantity} units of {tx.asset_name}, removed {proceeds:.2f} SAR from cash"
+
+    # ── Fund-flow WITHDRAW reversal (wallet-style SELL; no per-unit quantity) ──
+    # Created by /portfolio/fund-flow with direction=WITHDRAW.
+    elif tx.tx_type == "SELL" and tx.asset_name and not tx.quantity:
+        cash = await get_or_create_cash(db, user.id)
+        cash.balance = max(cash.balance - tx.total, 0)
+
+        # basis_removed is the cost-basis portion of the withdrawal; the rest
+        # was realized gain (mirrors fund_flow's proportional-basis withdraw).
+        basis_removed = tx.total - (tx.realized_pnl or 0)
+
+        holding_result = await db.execute(
+            select(Holding).where(
+                Holding.user_id == user.id,
+                Holding.name == tx.asset_name,
+            )
+        )
+        holding = holding_result.scalar_one_or_none()
+
+        if holding:
+            holding.current_price += tx.total
+            holding.avg_cost      += basis_removed
+        else:
+            # Withdrawal fully emptied the fund and it was removed — recreate it.
+            new_holding = Holding(
+                user_id=user.id,
+                name=tx.asset_name,
+                asset_type="Fund",
+                quantity=1,
+                avg_cost=basis_removed,
+                current_price=tx.total,
+                notes="Restored after fund withdrawal was deleted",
+            )
+            db.add(new_holding)
+
+        reversal_detail = f"Restored {tx.total:.2f} SAR to {tx.asset_name}, removed from cash"
 
     # ── DEPOSIT reversal ──────────────────────────────────────────────────────
     elif tx.tx_type == "DEPOSIT":

@@ -104,7 +104,7 @@ html[data-nav="top"] .app { grid-template-columns: 1fr; }
   padding: 0 10px; height: var(--row-h);
   border-bottom: 1px solid var(--line-2); vertical-align: middle;
 }
-.tbl tbody tr { transition: background 100ms ease; }
+.tbl tbody tr { position: relative; transition: background 100ms ease; }
 .tbl tbody tr:hover { background: var(--paper-2); }
 .tbl tbody tr:hover .row-actions { opacity: 1; transform: translateY(-50%) translateX(0); pointer-events: auto; }
 /* Hover actions overlay the right edge of the row instead of reserving a column,

@@ -356,8 +356,10 @@ const RangeSelector = ({ value, onChange, ranges = ["1D", "1W", "1M", "3M", "YTD
 // xLabels: [string]  (same length as values)
 const TwrChart = ({ series, xLabels, height = 260, yLabel = "" }) => {
   const wrapRef = React.useRef(null);
+  const tooltipRef = React.useRef(null);
   const [w, setW] = React.useState(900);
   const [hover, setHover] = React.useState(null);
+  const [tipW, setTipW] = React.useState(180);
 
   React.useEffect(() => {
     const el = wrapRef.current;
@@ -366,6 +368,12 @@ const TwrChart = ({ series, xLabels, height = 260, yLabel = "" }) => {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // Tooltip width varies with content (2 vs 3 series, sign of the % suffix) —
+  // measure it so the right-edge clamp below doesn't clip the text.
+  React.useLayoutEffect(() => {
+    if (hover !== null && tooltipRef.current) setTipW(tooltipRef.current.offsetWidth);
+  }, [hover]);
 
   if (!series || series.length === 0 || !xLabels || xLabels.length < 2)
     return <div ref={wrapRef} style={{ height }} />;
@@ -461,10 +469,10 @@ const TwrChart = ({ series, xLabels, height = 260, yLabel = "" }) => {
 
       {/* Tooltip */}
       {hover !== null && (
-        <div style={{
+        <div ref={tooltipRef} style={{
           position: "absolute",
           top: pad.t,
-          left: Math.min(px(hover) + 12, w - 180),
+          left: Math.max(pad.l, Math.min(px(hover) + 12, w - tipW - pad.r)),
           background: "#000",
           border: "1px solid var(--line)",
           padding: "8px 12px",

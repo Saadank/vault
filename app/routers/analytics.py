@@ -4,12 +4,16 @@ All data is computed on-the-fly from existing tables (no separate warehouse need
 """
 
 from collections import defaultdict
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db, User, Holding, Transaction, CashBalance, PortfolioSnapshot, HoldingSnapshot
+from app.database import (
+    get_db, User, Holding, Transaction, CashBalance, PortfolioSnapshot, HoldingSnapshot,
+    HoldingPriceHistory, BenchmarkSnapshot,
+)
 from app.auth import get_current_user
+from app.routers.prices import BENCHMARK_SYMBOL
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -679,6 +683,53 @@ async def analytics_performance(
         getattr(h, "country", None) or getattr(h, "sector", None) for h in holdings
     )
 
+    # ── Benchmark comparison (Step 8) ────────────────────────────────────────
+    # Attaches a rebased "benchmark_index" alongside twr_index/face_index on each
+    # series point, so the chart can overlay S&P 500 return over the same window.
+    # Forward-filled across weekends/holidays where the benchmark didn't trade.
+    benchmark_cumulative_return_pct = None
+    benchmark_alpha_pct = None
+    if twr["series"]:
+        bm_result = await db.execute(
+            select(BenchmarkSnapshot)
+            .where(BenchmarkSnapshot.symbol == BENCHMARK_SYMBOL)
+            .order_by(BenchmarkSnapshot.snapshot_date)
+        )
+        bm_by_date = {r.snapshot_date: r.close_price for r in bm_result.scalars().all()}
+
+        if bm_by_date:
+            sorted_bm_dates = sorted(bm_by_date)
+            base_price = None
+            last_known = None
+            bm_idx = 0
+            for point in twr["series"]:
+                d = point["date"]
+                while bm_idx < len(sorted_bm_dates) and sorted_bm_dates[bm_idx] <= d:
+                    last_known = bm_by_date[sorted_bm_dates[bm_idx]]
+                    bm_idx += 1
+                if base_price is None and last_known is not None:
+                    base_price = last_known
+                point["benchmark_index"] = (
+                    round((last_known / base_price) * 100, 4)
+                    if last_known is not None and base_price
+                    else None
+                )
+
+            # Only report a summary number if the benchmark covers the FULL
+            # window — i.e. every point has a value, so base_price lines up
+            # with twr_start_date. Otherwise "cumulative return" would silently
+            # compare TWR's full window against a shorter benchmark window
+            # (e.g. TWR since May vs. benchmark since yesterday), which is a
+            # wrong comparison, not just an incomplete one.
+            full_coverage = all(p.get("benchmark_index") is not None for p in twr["series"])
+            last_bm_index = twr["series"][-1].get("benchmark_index")
+            if full_coverage and last_bm_index is not None:
+                benchmark_cumulative_return_pct = round(last_bm_index - 100, 2)
+                if twr["cumulative_return_pct"] is not None:
+                    benchmark_alpha_pct = round(
+                        twr["cumulative_return_pct"] - benchmark_cumulative_return_pct, 2
+                    )
+
     return {
         "twr_start_date": twr["twr_start_date"],
         "twr_start_reason": twr["twr_start_reason"],
@@ -689,16 +740,48 @@ async def analytics_performance(
         "net_pnl": net_pnl,
         "geo_classifications_heuristic": geo_heuristic,
         "series": twr["series"],
+        "benchmark_symbol": BENCHMARK_SYMBOL,
+        "benchmark_cumulative_return_pct": benchmark_cumulative_return_pct,
+        "benchmark_alpha_pct": benchmark_alpha_pct,
         "metric_descriptions": {
             "unrealized_pnl": "Open positions: market value − cost basis. What you'd net if you sold everything today.",
             "realized_pnl": "Closed trades: sum of booked profits/losses. Money already banked.",
             "net_pnl": "unrealized + realized. Total SAR result across every trade ever made.",
             "twr_cumulative_return_pct": "Time-Weighted Return %. How each riyal invested grew or shrank, independent of deposit timing and size.",
+            "benchmark_alpha_pct": "Your TWR minus the S&P 500's return over the same window. Positive means you beat the market.",
         },
     }
 
 
-# ── 8. Send report on demand ──────────────────────────────────────────────────
+# ── 8. Per-holding price history ─────────────────────────────────────────────
+@router.get("/holding-history/{holding_id}")
+async def holding_price_history(
+    holding_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Real daily close price history for one holding, from HoldingPriceHistory
+    (append-only — unlike Holding.current_price, which is overwritten on every
+    refresh). Empty list means the holding predates this feature; history
+    starts accumulating from today.
+    """
+    h_result = await db.execute(
+        select(Holding).where(Holding.id == holding_id, Holding.user_id == user.id)
+    )
+    if h_result.scalar_one_or_none() is None:
+        raise HTTPException(404, "Holding not found")
+
+    result = await db.execute(
+        select(HoldingPriceHistory)
+        .where(HoldingPriceHistory.holding_id == holding_id, HoldingPriceHistory.user_id == user.id)
+        .order_by(HoldingPriceHistory.price_date)
+    )
+    rows = result.scalars().all()
+    return [{"date": r.price_date, "price": r.close_price} for r in rows]
+
+
+# ── 9. Send report on demand ──────────────────────────────────────────────────
 @router.post("/report/send")
 async def send_report_now(user: User = Depends(get_current_user)):
     """Immediately generate and email the portfolio report to the logged-in user."""

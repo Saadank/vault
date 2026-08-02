@@ -436,21 +436,29 @@ const MHoldingDetail = ({ data, tweaks, holding, onBack, openSell, openBuy, open
   const h = holding;
   const hidden = !!tweaks.privacy;
   const [range, setRange] = useState("1M");
-  // synthetic price chart specific to the holding
+
+  // Real daily close price history (append-only — never overwritten, unlike
+  // Holding.current_price). null = loading, [] = no history captured yet.
+  const [history, setHistory] = useState(null);
+  useEffect(() => {
+    setHistory(null);
+    window.fetchHoldingHistory(h.id).then(setHistory);
+  }, [h.id]);
+
+  const RANGE_DAYS = { "1D": 1, "1W": 7, "1M": 30, "3M": 90, "1Y": 365, "Max": Infinity };
   const chart = useMemo(() => {
-    const n = { "1D": 24, "1W": 30, "1M": 60, "3M": 90, "1Y": 200, "Max": 365 }[range] || 60;
-    const points = [];
-    const seed = h.id;
-    let v = h.avg_cost;
-    for (let i = 0; i < n; i++) {
-      v = v + (Math.sin(seed + i * 0.18) * h.avg_cost * 0.015) + (Math.random() - 0.5) * h.avg_cost * 0.008;
-      points.push({ date: i, value: v });
+    if (!history || history.length === 0) return [];
+    const days = RANGE_DAYS[range] ?? Infinity;
+    let rows = history;
+    if (days !== Infinity) {
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+      const cutStr = cutoff.toISOString().slice(0, 10);
+      const filtered = history.filter(r => r.date >= cutStr);
+      if (filtered.length) rows = filtered;
     }
-    // pull last to current price
-    const target = h.current_price;
-    const ratio = target / points[n - 1].value;
-    return points.map(p => ({ date: p.date, value: p.value * ratio }));
-  }, [h, range]);
+    return rows.map(r => ({ date: r.date, value: r.price }));
+  }, [history, range]);
   const up = h.unrealized_pct >= 0;
 
   return (
@@ -493,7 +501,21 @@ const MHoldingDetail = ({ data, tweaks, holding, onBack, openSell, openBuy, open
 
         {/* Chart */}
         <div style={{ padding: "8px 12px 0" }}>
-          <MAreaChart data={chart} width={368} height={170} accent={up ? "var(--gain)" : "var(--loss)"} />
+          {history === null ? (
+            <div style={{ height: 170, display: "grid", placeItems: "center" }}>
+              <span className="dim" style={{ fontSize: 12 }}>Loading price history…</span>
+            </div>
+          ) : chart.length < 2 ? (
+            // MAreaChart needs ≥2 points to draw a line; a single day's close
+            // can't show a trend anyway.
+            <div style={{ height: 170, display: "grid", placeItems: "center", textAlign: "center", padding: "0 24px" }}>
+              <span className="dim" style={{ fontSize: 12 }}>
+                Not enough history yet — VAULT records {h.name}'s close price daily starting today. Check back tomorrow.
+              </span>
+            </div>
+          ) : (
+            <MAreaChart data={chart} width={368} height={170} accent={up ? "var(--gain)" : "var(--loss)"} />
+          )}
         </div>
         <div style={{ display: "flex", padding: "10px 20px 18px", justifyContent: "space-between" }}>
           {["1D","1W","1M","3M","1Y","Max"].map(r => (
@@ -606,7 +628,7 @@ const MHoldingDetail = ({ data, tweaks, holding, onBack, openSell, openBuy, open
 // ANALYTICS
 // ─────────────────────────────────────────────────────────────
 const MAnalytics = ({ data, tweaks, navigate, route }) => {
-  const { summary, allocation, pnl, overview } = data;
+  const { summary, allocation, pnl, overview, performance } = data;
   const hidden = !!tweaks.privacy;
   const [tab, setTab] = useState("overview"); // overview | allocation | pnl
 
@@ -697,6 +719,42 @@ const MAnalytics = ({ data, tweaks, navigate, route }) => {
                 <div style={{ width: `${(overview.total_deposited / (overview.total_deposited + 50000)) * 100}%`, background: "var(--gain)" }} />
               </div>
             </div>
+
+            {/* Benchmark comparison — TWR vs S&P 500 over the same window */}
+            {performance && performance.twr_cumulative_return_pct !== null && (
+              <div className="m-card" style={{ padding: 16 }}>
+                <div className="eyebrow">True return vs. S&amp;P 500</div>
+                {performance.benchmark_cumulative_return_pct !== null ? (
+                  <>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: "var(--ink-3)" }}>You</div>
+                        <div className="serif" style={{ fontSize: 22, marginTop: 2, color: performance.twr_cumulative_return_pct >= 0 ? "var(--gain)" : "var(--loss)" }}>
+                          {performance.twr_cumulative_return_pct >= 0 ? "+" : ""}{performance.twr_cumulative_return_pct.toFixed(1)}%
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 11, color: "var(--ink-3)" }}>S&amp;P 500</div>
+                        <div className="serif" style={{ fontSize: 22, marginTop: 2, color: "var(--ink-2)" }}>
+                          {performance.benchmark_cumulative_return_pct >= 0 ? "+" : ""}{performance.benchmark_cumulative_return_pct.toFixed(1)}%
+                        </div>
+                      </div>
+                    </div>
+                    {performance.benchmark_alpha_pct !== null && (
+                      <div style={{ marginTop: 10, fontSize: 12, color: performance.benchmark_alpha_pct >= 0 ? "var(--gain)" : "var(--loss)" }}>
+                        {performance.benchmark_alpha_pct >= 0
+                          ? `Beating the market by ${performance.benchmark_alpha_pct.toFixed(1)}%`
+                          : `Trailing the market by ${Math.abs(performance.benchmark_alpha_pct).toFixed(1)}%`}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="dim" style={{ fontSize: 12, marginTop: 8 }}>
+                    Benchmark comparison accumulates daily — check back soon.
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Win rate */}
             <div className="m-card" style={{ padding: 16 }}>

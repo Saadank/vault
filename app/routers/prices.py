@@ -15,9 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime, timedelta
 from typing import Optional
 
-from app.database import get_db, User, Holding, CashBalance, PortfolioSnapshot, HoldingSnapshot
+from app.database import (
+    get_db, User, Holding, CashBalance, PortfolioSnapshot, HoldingSnapshot,
+    HoldingPriceHistory, BenchmarkSnapshot,
+)
 from app.auth import get_current_user
-from app.price_service import fetch_prices_bulk
+from app.price_service import fetch_prices_bulk, fetch_price
+
+BENCHMARK_SYMBOL = "^GSPC"  # S&P 500
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/prices", tags=["prices"])
@@ -302,6 +307,69 @@ async def _take_holding_snapshot(db: AsyncSession, user_id: int):
                 current_price=round(h.current_price, 4),
             ))
 
+    await db.commit()
+
+
+async def _record_price_history(db: AsyncSession, user_id: int):
+    """
+    Append-only daily close price per holding — never overwritten, unlike
+    Holding.current_price and HoldingSnapshot. Insert-or-ignore per
+    (holding_id, date) so re-running within the same day is a no-op.
+    """
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+
+    result = await db.execute(
+        select(Holding).where(Holding.user_id == user_id, Holding.quantity > 0)
+    )
+    holdings = result.scalars().all()
+    if not holdings:
+        return
+
+    existing = await db.execute(
+        select(HoldingPriceHistory.holding_id).where(
+            HoldingPriceHistory.user_id == user_id,
+            HoldingPriceHistory.price_date == today_str,
+        )
+    )
+    already = {row[0] for row in existing.all()}
+
+    for h in holdings:
+        if h.id in already:
+            continue
+        db.add(HoldingPriceHistory(
+            user_id=user_id,
+            holding_id=h.id,
+            ticker=h.ticker,
+            price_date=today_str,
+            close_price=round(h.current_price, 4),
+        ))
+
+    await db.commit()
+
+
+async def _record_benchmark_snapshot(db: AsyncSession, symbol: str = BENCHMARK_SYMBOL):
+    """
+    Append-only daily close for the benchmark index. Global (not per-user).
+    Insert-or-ignore per (symbol, date) so the first caller in a given day
+    writes it and subsequent calls that day no-op.
+    """
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+
+    existing = await db.execute(
+        select(BenchmarkSnapshot).where(
+            BenchmarkSnapshot.symbol == symbol,
+            BenchmarkSnapshot.snapshot_date == today_str,
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        return
+
+    price = await fetch_price(symbol, "stock")
+    if price is None:
+        logger.warning(f"[benchmark] Could not fetch price for {symbol}")
+        return
+
+    db.add(BenchmarkSnapshot(symbol=symbol, snapshot_date=today_str, close_price=round(price, 4)))
     await db.commit()
 
 

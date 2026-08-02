@@ -31,7 +31,10 @@ os.makedirs("static", exist_ok=True)
 from app.database import init_db, SessionLocal, User
 # auth middleware no longer needed for page routes (SPA handles it)
 from app.routers import auth, portfolio, cash, prices, chat, analytics, ocr
-from app.routers.prices import _take_hourly_snapshot, _refresh_holding_prices, _take_holding_snapshot
+from app.routers.prices import (
+    _take_hourly_snapshot, _refresh_holding_prices, _take_holding_snapshot,
+    _record_price_history, _record_benchmark_snapshot,
+)
 from sqlalchemy import select
 
 # Show INFO logs from our app modules in the uvicorn console
@@ -53,8 +56,13 @@ async def _hourly_snapshot_loop():
                         await _refresh_holding_prices(db, user.id)
                         await _take_hourly_snapshot(db, user.id)
                         await _take_holding_snapshot(db, user.id)
+                        await _record_price_history(db, user.id)
                     except Exception as e:
                         logger.warning(f"Hourly snapshot failed for user {user.id}: {e}")
+                try:
+                    await _record_benchmark_snapshot(db)
+                except Exception as e:
+                    logger.warning(f"Benchmark snapshot failed: {e}")
         except Exception as e:
             logger.error(f"Hourly snapshot loop error: {e}")
 

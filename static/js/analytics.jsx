@@ -1,11 +1,30 @@
 // Analytics screen — overview, true performance, allocation, P&L, activity, cashflow, scoreboard.
 
 const Analytics = ({ data, onSendReport }) => {
-  const { overview, allocation, pnl, monthlyTx, mostTraded, cashflow, scoreboard, performance, fmt, summary } = data;
+  const { overview, allocation, pnl, monthlyTx, mostTraded, cashflow, scoreboard, performance, fmt, summary, holdings } = data;
   const [allocMode, setAllocMode] = React.useState("type");
   const [pnlSort, setPnlSort] = React.useState({ col: "total", dir: -1 });
   const [sbSort, setSbSort] = React.useState({ col: "total_pnl", dir: -1 });
   const [twrRange, setTwrRange] = React.useState("All");
+
+  // ── Per-holding price history (Scoreboard row expand) ─────────────────────
+  // Scoreboard rows are keyed by asset name (open + closed positions), but
+  // price history is keyed by holding id — only open positions still have one.
+  const holdingIdByName = React.useMemo(
+    () => Object.fromEntries((holdings || []).map(h => [h.name, h.id])),
+    [holdings]
+  );
+  const [expandedName, setExpandedName] = React.useState(null);
+  const [historyCache, setHistoryCache] = React.useState({});
+  const toggleHistory = async (name) => {
+    if (expandedName === name) { setExpandedName(null); return; }
+    setExpandedName(name);
+    const id = holdingIdByName[name];
+    if (id != null && !historyCache[id]) {
+      const rows = await window.fetchHoldingHistory(id);
+      setHistoryCache(c => ({ ...c, [id]: rows }));
+    }
+  };
 
   // Filter + rebase TWR series to the selected range window
   const TWR_RANGES = ["1W", "1M", "3M", "6M", "1Y", "All"];
@@ -25,10 +44,17 @@ const Analytics = ({ data, onSendReport }) => {
     // Rebase both indices to 100 at the first visible point
     const baseFace = slice[0].face_index;
     const baseTwr  = slice[0].twr_index;
+    // Benchmark may start partway through the series (capture began later than
+    // the portfolio's own history) — rebase from the first point that has it.
+    const baseBmPoint = slice.find(p => p.benchmark_index != null);
+    const baseBm = baseBmPoint ? baseBmPoint.benchmark_index : null;
     return slice.map(p => ({
       ...p,
       face_index_r: (p.face_index / baseFace) * 100,
       twr_index_r:  (p.twr_index  / baseTwr)  * 100,
+      benchmark_index_r: (baseBm != null && p.benchmark_index != null)
+        ? (p.benchmark_index / baseBm) * 100
+        : null,
     }));
   }, [performance, twrRange]);
 
@@ -166,6 +192,31 @@ const Analytics = ({ data, onSendReport }) => {
           {twrSeries.length > 1 && (() => {
             const rangeReturn = twrSeries[twrSeries.length - 1].twr_index_r - 100;
             const chartColor = rangeReturn >= 0 ? "var(--gain)" : "var(--loss)";
+            // Only draw the benchmark line once it covers the whole visible
+            // range — a partial line (nulls at the start) would corrupt the
+            // chart's scale. It fills in day by day as capture accumulates.
+            const hasBenchmark = twrSeries.every(p => p.benchmark_index_r != null);
+            const chartSeries = [
+              {
+                label: "Face Value (indexed)",
+                values: twrSeries.map(p => p.face_index_r),
+                color: "var(--muted)",
+                dash: true,
+              },
+              {
+                label: "True Performance (TWR)",
+                values: twrSeries.map(p => p.twr_index_r),
+                color: chartColor,
+              },
+            ];
+            if (hasBenchmark) {
+              chartSeries.push({
+                label: performance.benchmark_symbol === "^GSPC" ? "S&P 500" : (performance.benchmark_symbol || "Benchmark"),
+                values: twrSeries.map(p => p.benchmark_index_r),
+                color: "var(--ink-3)",
+                dash: true,
+              });
+            }
             return (
               <div>
                 {/* Range buttons */}
@@ -178,6 +229,19 @@ const Analytics = ({ data, onSendReport }) => {
                     <span style={{ color: rangeReturn >= 0 ? "var(--gain)" : "var(--loss)", fontWeight: 600 }}>
                       {rangeReturn >= 0 ? "+" : ""}{rangeReturn.toFixed(2)}%
                     </span>
+                    {hasBenchmark && performance.benchmark_alpha_pct !== null && (
+                      <>
+                        {" "}·{" "}
+                        <span style={{ color: performance.benchmark_alpha_pct >= 0 ? "var(--gain)" : "var(--loss)", fontWeight: 600 }}>
+                          {performance.benchmark_alpha_pct >= 0 ? "+" : ""}{performance.benchmark_alpha_pct.toFixed(2)}% vs S&amp;P 500
+                        </span>
+                      </>
+                    )}
+                    {!hasBenchmark && (
+                      <span style={{ marginLeft: 8, color: "var(--ink-3)" }} title="Benchmark comparison appears once enough days of S&P 500 data have been collected.">
+                        · benchmark data accumulating
+                      </span>
+                    )}
                   </span>
                   <div className="row gap-2" style={{ background: "var(--paper-2)", border: "1px solid var(--line)", borderRadius: 8, padding: 3 }}>
                     {TWR_RANGES.map(r => (
@@ -195,19 +259,7 @@ const Analytics = ({ data, onSendReport }) => {
                   </div>
                 </div>
                 <TwrChart
-                  series={[
-                    {
-                      label: "Face Value (indexed)",
-                      values: twrSeries.map(p => p.face_index_r),
-                      color: "var(--muted)",
-                      dash: true,
-                    },
-                    {
-                      label: "True Performance (TWR)",
-                      values: twrSeries.map(p => p.twr_index_r),
-                      color: chartColor,
-                    },
-                  ]}
+                  series={chartSeries}
                   xLabels={twrSeries.map(p => p.date.slice(5))}
                   height={260}
                   yLabel="Index (start = 100)"
@@ -501,29 +553,69 @@ const Analytics = ({ data, onSendReport }) => {
                 <SortTh label="Total P&L"    col="total_pnl"    sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
                 <SortTh label="Return %"     col="return_pct"   sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
                 <SortTh label="First bought" col="first_bought" sortState={sbSort} onToggle={mkToggle(setSbSort)} />
+                <th style={{ width: 32 }}></th>
               </tr>
             </thead>
             <tbody>
-              {sortRows(scoreboard, sbSort).map((s, i) => (
-                <tr key={s.name}>
-                  <td>
-                    <span className="serif" style={{ fontSize: 16, color: i < 3 ? "var(--accent)" : "var(--ink-3)" }}>{i + 1}</span>
-                  </td>
-                  <td style={{ fontWeight: 500 }}>{s.name}</td>
-                  <td><TypeChip type={s.asset_type} /></td>
-                  <td>
-                    {s.status === "closed"
-                      ? <span className="chip" style={{ background: "var(--paper-2)", color: "var(--ink-3)" }}>○ Closed</span>
-                      : <span className="chip gold" style={{ background: "var(--gain-soft)", color: "var(--gain)" }}>● Open</span>
-                    }
-                  </td>
-                  <td className="num-cell right dim">{fmt.SAR(s.invested, { decimals: 0 })}</td>
-                  <td className="num-cell right">{fmt.SAR(s.market_value, { decimals: 0 })}</td>
-                  <td className="num-cell right" style={{ fontWeight: 500 }}><Delta value={s.total_pnl} /></td>
-                  <td className="num-cell right"><Delta value={s.return_pct} suffix="%" /></td>
-                  <td className="mono dim" style={{ fontSize: 11.5 }}>{s.first_bought}</td>
-                </tr>
-              ))}
+              {sortRows(scoreboard, sbSort).map((s, i) => {
+                const holdingId = holdingIdByName[s.name];
+                const isOpen = holdingId != null;
+                const isExpanded = expandedName === s.name;
+                const history = isOpen ? historyCache[holdingId] : null;
+                return (
+                  <React.Fragment key={s.name}>
+                    <tr
+                      onClick={() => isOpen && toggleHistory(s.name)}
+                      style={{ cursor: isOpen ? "pointer" : "default" }}
+                      title={isOpen ? "Click to view price history" : "Closed position — no live price history"}
+                    >
+                      <td>
+                        <span className="serif" style={{ fontSize: 16, color: i < 3 ? "var(--accent)" : "var(--ink-3)" }}>{i + 1}</span>
+                      </td>
+                      <td style={{ fontWeight: 500 }}>{s.name}</td>
+                      <td><TypeChip type={s.asset_type} /></td>
+                      <td>
+                        {s.status === "closed"
+                          ? <span className="chip" style={{ background: "var(--paper-2)", color: "var(--ink-3)" }}>○ Closed</span>
+                          : <span className="chip gold" style={{ background: "var(--gain-soft)", color: "var(--gain)" }}>● Open</span>
+                        }
+                      </td>
+                      <td className="num-cell right dim">{fmt.SAR(s.invested, { decimals: 0 })}</td>
+                      <td className="num-cell right">{fmt.SAR(s.market_value, { decimals: 0 })}</td>
+                      <td className="num-cell right" style={{ fontWeight: 500 }}><Delta value={s.total_pnl} /></td>
+                      <td className="num-cell right"><Delta value={s.return_pct} suffix="%" /></td>
+                      <td className="mono dim" style={{ fontSize: 11.5 }}>{s.first_bought}</td>
+                      <td className="dim" style={{ textAlign: "center" }}>
+                        {isOpen && <Icon name={isExpanded ? "chevDown" : "chevRight"} size={12} />}
+                      </td>
+                    </tr>
+                    {isExpanded && isOpen && (
+                      <tr>
+                        <td colSpan={10} style={{ padding: "4px 16px 18px", background: "var(--paper-2)" }}>
+                          {history === undefined || history === null ? (
+                            <div className="dim" style={{ fontSize: 12, padding: "10px 0" }}>Loading price history…</div>
+                          ) : history.length < 2 ? (
+                            // AreaChart needs ≥2 points to draw a line; a single day's
+                            // close can't show a trend anyway.
+                            <div className="dim" style={{ fontSize: 12, padding: "10px 0" }}>
+                              Not enough history yet for {s.name} — VAULT records its close price daily starting today. Check back tomorrow.
+                            </div>
+                          ) : (
+                            <div>
+                              <div className="eyebrow" style={{ marginBottom: 6 }}>Price history · {s.name}</div>
+                              <AreaChart
+                                data={history.map(h => ({ date: h.date, value: h.price }))}
+                                height={140}
+                                accent={s.total_pnl >= 0 ? "var(--gain)" : "var(--loss)"}
+                              />
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -222,6 +222,9 @@
         geo_heuristic:             performanceRaw.geo_classifications_heuristic ?? true,
         series:                    performanceRaw.series                    || [],
         metric_descriptions:       performanceRaw.metric_descriptions       || {},
+        benchmark_symbol:              performanceRaw.benchmark_symbol              || null,
+        benchmark_cumulative_return_pct: performanceRaw.benchmark_cumulative_return_pct ?? null,
+        benchmark_alpha_pct:            performanceRaw.benchmark_alpha_pct           ?? null,
       },
       fmt,
     };
@@ -229,7 +232,17 @@
     return window.VAULT_DATA;
   }
 
+  // ── Per-holding price history — fetched on demand (not part of the bulk load) ─
+  async function fetchHoldingHistory(holdingId) {
+    try {
+      return await apiFetch(`/api/analytics/holding-history/${holdingId}`);
+    } catch (e) {
+      return [];
+    }
+  }
+
   // Pre-seed fmt so components that reference VAULT_DATA.fmt at parse time work
   window.VAULT_DATA = { fmt };
   window.VAULT_LOAD_DATA = loadVaultData;
+  window.fetchHoldingHistory = fetchHoldingHistory;
 })();

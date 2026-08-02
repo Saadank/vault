@@ -6,7 +6,7 @@ Swap the DATABASE_URL to PostgreSQL or MySQL easily:
 """
 
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, ForeignKey, Text, text
+    Column, Integer, String, Float, DateTime, ForeignKey, Text, text, UniqueConstraint
 )
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -150,3 +150,39 @@ class HoldingSnapshot(Base):
     avg_cost      = Column(Float, nullable=False)
     current_price = Column(Float, nullable=False)
     created_at    = Column(DateTime, default=datetime.utcnow)
+
+
+class HoldingPriceHistory(Base):
+    """
+    Append-only daily close price per holding — pure market price over time,
+    independent of quantity/avg_cost (unlike HoldingSnapshot, which is
+    overwritten hourly and only tracks allocation state, not price history).
+    """
+    __tablename__ = "holding_price_history"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    user_id     = Column(Integer, ForeignKey("users.id"), nullable=False)
+    holding_id  = Column(Integer, ForeignKey("holdings.id"), nullable=False)
+    ticker      = Column(String(50), nullable=True)
+    price_date  = Column(String(10), nullable=False)   # YYYY-MM-DD
+    close_price = Column(Float, nullable=False)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("holding_id", "price_date", name="uq_holding_price_day"),
+    )
+
+
+class BenchmarkSnapshot(Base):
+    """Daily close for a market index (e.g. S&P 500), shared across all users."""
+    __tablename__ = "benchmark_snapshots"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    symbol        = Column(String(20), nullable=False)   # e.g. "^GSPC"
+    snapshot_date = Column(String(10), nullable=False)   # YYYY-MM-DD
+    close_price   = Column(Float, nullable=False)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "snapshot_date", name="uq_benchmark_symbol_day"),
+    )

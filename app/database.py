@@ -104,6 +104,9 @@ class Holding(Base):
     updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     owner = relationship("User", back_populates="holdings")
+    price_history = relationship(
+        "HoldingPriceHistory", cascade="all, delete-orphan", passive_deletes=False
+    )
 
 
 class Transaction(Base):

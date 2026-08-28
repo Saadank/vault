@@ -437,6 +437,10 @@ async def refresh_prices(
     # Always take a snapshot after refresh (captures current state)
     await _take_snapshot(db, user.id)
 
+    # Also update this hour's chart point so a manual click is visible on the
+    # chart immediately, instead of waiting for the next automatic hourly tick.
+    await _take_hourly_snapshot(db, user.id)
+
     return {
         **summary,
         "refreshed_at": datetime.utcnow().isoformat(),

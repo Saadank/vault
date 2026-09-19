@@ -1,8 +1,9 @@
 // Dashboard screen — KPI strip, chart, holdings table, cash card
 
 const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePrice, openFundFlow, openBuy, openDeposit, openWithdraw, openChat, onSendReport }) => {
-  const { summary, holdings, chart, fmt } = data;
+  const { summary, holdings, chart, performance, fmt } = data;
   const [range, setRange] = React.useState("1M");
+  const [view, setView] = React.useState("Value");   // "Value" (SAR) | "Growth" (TWR %, deposits stripped)
   const [hoverPt, setHoverPt] = React.useState(null);
   const [primaryCcy, setPrimaryCcy] = React.useState(tweaks.primaryCcy || "SAR");
   const [rowMenu, setRowMenu] = React.useState(null);
@@ -22,9 +23,9 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
 
   React.useEffect(() => { setPrimaryCcy(tweaks.primaryCcy || "SAR"); }, [tweaks.primaryCcy]);
 
-  const filteredChart = React.useMemo(() => {
-    if (!chart || chart.length === 0) return [];
-    if (range === "Max") return chart;
+  // First date (YYYY-MM-DD) included in the selected range; null = no cutoff.
+  const cutoffStr = React.useMemo(() => {
+    if (range === "Max") return null;
     const today = new Date();
     const cutoff = new Date(today);
     if      (range === "1D")  cutoff.setDate(today.getDate() - 1);
@@ -33,15 +34,56 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
     else if (range === "3M")  cutoff.setMonth(today.getMonth() - 3);
     else if (range === "YTD") { cutoff.setMonth(0); cutoff.setDate(1); }
     else if (range === "1Y")  cutoff.setFullYear(today.getFullYear() - 1);
-    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    return cutoff.toISOString().slice(0, 10);
+  }, [range]);
+
+  const filteredChart = React.useMemo(() => {
+    if (!chart || chart.length === 0) return [];
+    if (!cutoffStr) return chart;
     const filtered = chart.filter(p => p.date >= cutoffStr);
     return filtered.length > 1 ? filtered : chart.slice(-2);
-  }, [chart, range]);
+  }, [chart, cutoffStr]);
+
+  // Growth view: the daily TWR series rebased to 0% at the start of the range.
+  // Deposits/withdrawals are stripped out, so the line only moves when the
+  // market does. Each point keeps total_value / net_flow for the tooltip.
+  const growthChart = React.useMemo(() => {
+    const src = (performance && performance.series) || [];
+    if (src.length < 2) return [];
+    let slice = cutoffStr ? src.filter(p => p.date >= cutoffStr) : src;
+    if (slice.length < 2) slice = src.slice(-2);
+    const base = slice[0].twr_index;
+    const baseBm = slice.find(p => p.benchmark_index != null)?.benchmark_index ?? null;
+    return slice.map(p => ({
+      date: p.date,
+      value: (p.twr_index / base - 1) * 100,
+      total_value: p.total_value,
+      net_flow: p.net_flow,
+      benchmark_pct: baseBm != null && p.benchmark_index != null ? (p.benchmark_index / baseBm - 1) * 100 : null,
+    }));
+  }, [performance, cutoffStr]);
+
+  // What happened to the money inside the visible growth window
+  const growthStats = React.useMemo(() => {
+    if (!growthChart.length) return null;
+    const first = growthChart[0], last = growthChart[growthChart.length - 1];
+    let deposits = 0, withdrawals = 0;
+    growthChart.slice(1).forEach(p => { if (p.net_flow > 0) deposits += p.net_flow; else if (p.net_flow < 0) withdrawals -= p.net_flow; });
+    const marketGain = last.total_value - first.total_value - deposits + withdrawals;
+    const hasBm = growthChart.every(p => p.benchmark_pct != null);
+    return { returnPct: last.value, deposits, withdrawals, marketGain, from: first.date, benchmarkPct: hasBm ? last.benchmark_pct : null };
+  }, [growthChart]);
+
+  const isGrowth = view === "Growth" && growthChart.length > 1;
+  const activeChart = isGrowth ? growthChart : filteredChart;
+  React.useEffect(() => { setHoverPt(null); }, [view, range]);
 
   const totalValue = summary.total_value;
-  const showPt = hoverPt || filteredChart[filteredChart.length - 1];
+  const showPt = hoverPt || activeChart[activeChart.length - 1];
+  const showValue = isGrowth ? (showPt?.total_value ?? totalValue) : showPt?.value;
   const firstPt = filteredChart[0];
-  const rangeChange = (showPt?.value || 0) - (firstPt?.value || 0);
+  const lastPt = filteredChart[filteredChart.length - 1];
+  const rangeChange = ((hoverPt && !isGrowth ? hoverPt : lastPt)?.value || 0) - (firstPt?.value || 0);
   const rangeChangePct = firstPt ? (rangeChange / firstPt.value) * 100 : 0;
 
   // Lowest / highest value within the selected range
@@ -81,27 +123,75 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
             <div className="eyebrow">Total Portfolio Value</div>
             <div className="row gap-12" style={{ alignItems: "baseline" }}>
               <div className="hero-num" style={{ fontSize: 56 }}>
-                {fmt.SAR(showPt.value, { decimals: 2 })}
+                {fmt.SAR(showValue, { decimals: 2 })}
                 <span className="muted" style={{ fontFamily: "Geist", fontSize: 14, marginLeft: 8, letterSpacing: 0 }}>SAR</span>
               </div>
               <Delta value={summary.day_change_pct} suffix="% today" />
             </div>
-            <div className="row gap-10 dim" style={{ fontSize: 12.5, marginTop: 4 }}>
-              <span className="mono">{showPt.date}</span>
-              <span>·</span>
-              <span>{range} change <Delta className="" value={rangeChangePct} suffix="%" /></span>
-              <span>·</span>
-              <span>{range} low <span style={{ color: "var(--ink-2)" }}>{fmt.SAR(rangeLow, { decimals: 0 })}</span></span>
-              <span>·</span>
-              <span>{range} high <span style={{ color: "var(--ink-2)" }}>{fmt.SAR(rangeHigh, { decimals: 0 })}</span></span>
-              <span>·</span>
-              <span>≈ ${fmt.USD(showPt.value / 3.75)} USD</span>
-            </div>
+            {isGrowth ? (
+              // Growth view: how the investments themselves did, deposits stripped out
+              <div className="row gap-10 dim" style={{ fontSize: 12.5, marginTop: 4 }}>
+                <span className="mono">{showPt.date}</span>
+                <span>·</span>
+                {/* "Max" is the range button's name, not "maximum" — spell out
+                    the window so "Max return +6.8%" can't read as a peak. */}
+                <span>
+                  {range === "Max"
+                    ? <>return since <span className="mono">{growthStats.from}</span></>
+                    : <>{range} return</>}
+                  {hoverPt && <> to <span className="mono">{showPt.date}</span></>}
+                  {" "}<Delta className="" value={hoverPt ? hoverPt.value : growthStats.returnPct} suffix="%" />
+                  {" "}<span style={{ opacity: 0.7 }}>excl. deposits</span>
+                </span>
+                <span>·</span>
+                <span>market gain <Delta className="" value={growthStats.marketGain} decimals={0} suffix=" SAR" /></span>
+                {growthStats.deposits > 0 && (
+                  <>
+                    <span>·</span>
+                    <span>deposited <span style={{ color: "var(--ink-2)" }}>{fmt.SAR(growthStats.deposits, { decimals: 0 })}</span></span>
+                  </>
+                )}
+                {growthStats.withdrawals > 0 && (
+                  <>
+                    <span>·</span>
+                    <span>withdrawn <span style={{ color: "var(--ink-2)" }}>{fmt.SAR(growthStats.withdrawals, { decimals: 0 })}</span></span>
+                  </>
+                )}
+                {growthStats.benchmarkPct != null && (
+                  <>
+                    <span>·</span>
+                    <span>S&amp;P 500 <Delta className="" value={growthStats.benchmarkPct} suffix="%" /></span>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="row gap-10 dim" style={{ fontSize: 12.5, marginTop: 4 }}>
+                <span className="mono">{showPt.date}</span>
+                <span>·</span>
+                <span>{range} change <Delta className="" value={rangeChangePct} suffix="%" /></span>
+                <span>·</span>
+                <span>{range} low <span style={{ color: "var(--ink-2)" }}>{fmt.SAR(rangeLow, { decimals: 0 })}</span></span>
+                <span>·</span>
+                <span>{range} high <span style={{ color: "var(--ink-2)" }}>{fmt.SAR(rangeHigh, { decimals: 0 })}</span></span>
+                <span>·</span>
+                <span>≈ ${fmt.USD(showPt.value / 3.75)} USD</span>
+              </div>
+            )}
           </div>
-          <RangeSelector value={range} onChange={setRange} />
+          <div className="row gap-8">
+            {growthChart.length > 1 && (
+              <RangeSelector value={view} onChange={setView} ranges={["Value", "Growth"]} />
+            )}
+            <RangeSelector value={range} onChange={setRange} />
+          </div>
         </div>
         <div style={{ padding: "8px 14px 14px" }}>
-          <AreaChart data={filteredChart} height={300} accent="var(--accent)" onHover={setHoverPt} />
+          {isGrowth ? (
+            <AreaChart key="growth" data={growthChart} height={300} valueFormat="pct"
+                       accent={growthStats.returnPct >= 0 ? "var(--gain)" : "var(--loss)"} onHover={setHoverPt} />
+          ) : (
+            <AreaChart key="value" data={filteredChart} height={300} accent="var(--accent)" onHover={setHoverPt} />
+          )}
         </div>
 
         {/* KPI strip embedded in chart card footer */}

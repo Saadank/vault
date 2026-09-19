@@ -1,11 +1,13 @@
-// Analytics screen — overview, true performance, allocation, P&L, activity, cashflow, scoreboard.
+// Analytics screen — overview, true performance, monthly, allocation, activity, cashflow, scoreboard.
+// Every headline number appears exactly once; the Overview KPIs are the same
+// TWR / net-P&L figures the sections below are built from.
 
 const Analytics = ({ data, onSendReport }) => {
   const { overview, allocation, pnl, monthlyTx, mostTraded, cashflow, scoreboard, performance, fmt, summary, holdings } = data;
   const [allocMode, setAllocMode] = React.useState("type");
-  const [pnlSort, setPnlSort] = React.useState({ col: "total", dir: -1 });
   const [sbSort, setSbSort] = React.useState({ col: "total_pnl", dir: -1 });
   const [twrRange, setTwrRange] = React.useState("All");
+  const [monthHover, setMonthHover] = React.useState(null);   // hovered row/bar in Monthly Performance
 
   // ── Per-holding price history (Scoreboard row expand) ─────────────────────
   // Scoreboard rows are keyed by asset name (open + closed positions), but
@@ -89,7 +91,7 @@ const Analytics = ({ data, onSendReport }) => {
           <div className="eyebrow">Analytics · All-time view</div>
           <h1 className="serif" style={{ fontSize: 34, lineHeight: 1 }}>The deeper layer.</h1>
           <div className="dim" style={{ fontSize: 13, maxWidth: 540, marginTop: 4 }}>
-            Where your money has been, how it moved, and what it earned. Built from your daily snapshots.
+            Where your money has been, how it moved, and what it earned. Built from your hourly snapshots and trade history.
           </div>
         </div>
         <div className="row gap-8">
@@ -99,176 +101,282 @@ const Analytics = ({ data, onSendReport }) => {
         </div>
       </div>
 
-      {/* Overview KPIs */}
-      <Section eyebrow="Overview" title="Performance at a glance">
+      {/* Overview KPIs — each is the figure the sections below are built from */}
+      <Section
+        eyebrow="Overview"
+        title="Performance at a glance"
+        action={
+          overview.twr_start_date && (
+            <span className="dim mono" style={{ fontSize: 11 }}>
+              Return measured from {overview.twr_start_date}
+              {performance && performance.twr_start_reason && (
+                <span style={{ marginLeft: 8, color: "var(--gold)" }} title={performance.twr_start_reason}>⚠ data gap before</span>
+              )}
+            </span>
+          )
+        }
+      >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
           <KPI
-            label="Total Return"
-            value={fmt.PCT(overview.total_return_pct, { sign: true })}
-            accent="var(--gain)"
-            sub={<><Delta value={overview.total_return_sar} suffix=" SAR" /></>}
+            label="True Return (TWR)"
+            value={overview.total_return_pct != null ? fmt.PCT(overview.total_return_pct, { sign: true }) : "—"}
+            accent={overview.total_return_pct == null ? "var(--ink)" : overview.total_return_pct >= 0 ? "var(--gain)" : "var(--loss)"}
+            sub={<span className="dim" style={{ fontSize: 12 }}>Deposits &amp; withdrawals stripped out — what each riyal actually earned</span>}
             large
           />
           <KPI
-            label="Peak Value"
-            value={fmt.SAR(overview.peak_value, { decimals: 0 })}
+            label="Net P&L"
+            value={fmt.SAR(overview.total_return_sar, { sign: true, decimals: 0 })}
             suffix="SAR"
-            sub={<span className="dim" style={{ fontSize: 12 }}>Drawdown <Delta value={overview.current_drawdown_pct} suffix="%" /></span>}
-            large
-          />
-          <KPI
-            label="Best / Worst Month"
-            value={
-              <span>
-                <span style={{ color: "var(--gain)" }}>+{overview.best_month.return_pct}%</span>
-                <span className="dim" style={{ margin: "0 8px", fontFamily: "Geist", fontSize: 14 }}>·</span>
-                <span style={{ color: "var(--loss)" }}>−{Math.abs(overview.worst_month.return_pct)}%</span>
+            accent={overview.total_return_sar >= 0 ? "var(--gain)" : "var(--loss)"}
+            sub={
+              <span className="dim" style={{ fontSize: 12 }}>
+                Realized <Delta value={pnl.summary.total_realized || 0} decimals={0} /> · Unrealized <Delta value={pnl.summary.total_unrealized || 0} decimals={0} />
               </span>
             }
+            large
+          />
+          <KPI
+            label="Portfolio Value"
+            value={fmt.SAR(overview.current_value, { decimals: 0 })}
+            suffix="SAR"
             sub={
-              <div className="row gap-12 dim" style={{ fontSize: 11.5 }}>
-                <span className="mono">{overview.best_month.month}</span>
-                <span>·</span>
-                <span className="mono">{overview.worst_month.month}</span>
-              </div>
+              <span className="dim" style={{ fontSize: 12 }}>
+                Incl. cash · Peak {fmt.SAR(overview.peak_value, { decimals: 0 })} · Drawdown <Delta value={overview.current_drawdown_pct} suffix="%" />
+              </span>
             }
             large
           />
           <KPI
             label="Win Rate"
             value={fmt.PCT(overview.win_rate_pct, { sign: false })}
-            sub={<span className="dim" style={{ fontSize: 12 }}>{pnl.summary.winning_sells} winning of {pnl.summary.total_sells} sells</span>}
+            sub={
+              <span className="dim" style={{ fontSize: 12 }}>
+                {overview.winning_sells} winning of {overview.total_sells} sells · avg win {fmt.SAR(overview.avg_win, { sign: true, decimals: 0 })} / loss {fmt.SAR(overview.avg_loss, { decimals: 0 })}
+              </span>
+            }
             large
           />
         </div>
       </Section>
 
-      {/* True Performance (TWR) */}
-      {performance && (
-        <Section
-          eyebrow="True Performance"
-          title="Return adjusted for deposits &amp; withdrawals"
-          action={
-            performance.twr_start_date && (
+      {/* True Performance (TWR) chart */}
+      {performance && twrSeries.length > 1 && (() => {
+        const last = twrSeries[twrSeries.length - 1];
+        const rangeReturn = last.twr_index_r - 100;
+        const chartColor = rangeReturn >= 0 ? "var(--gain)" : "var(--loss)";
+        // Only draw the benchmark once it covers the whole visible range — a
+        // partial line (nulls at the start) would corrupt the chart's scale.
+        // It fills in day by day as capture accumulates.
+        const hasBenchmark = twrSeries.every(p => p.benchmark_index_r != null);
+        // Alpha over the *visible* window, so it always pairs with the range
+        // return shown beside it (the API's benchmark_alpha_pct is all-time).
+        const rangeAlpha = hasBenchmark ? rangeReturn - (last.benchmark_index_r - 100) : null;
+        const bmLabel = performance.benchmark_symbol === "^GSPC" ? "S&P 500" : (performance.benchmark_symbol || "Benchmark");
+        // No "face value" line: it is the deposit-inflated series (index 260+
+        // vs. TWR 107) and sharing an axis with it flattened the TWR line.
+        const chartSeries = [
+          { label: "True Performance (TWR)", values: twrSeries.map(p => p.twr_index_r), color: chartColor },
+        ];
+        if (hasBenchmark) {
+          chartSeries.push({ label: bmLabel, values: twrSeries.map(p => p.benchmark_index_r), color: "var(--ink-3)", dash: true });
+        }
+        return (
+          <Section
+            eyebrow="True Performance"
+            title="How each riyal grew over time"
+            action={
+              <div className="row gap-2" style={{ background: "var(--paper-2)", border: "1px solid var(--line)", borderRadius: 8, padding: 3 }}>
+                {TWR_RANGES.map(r => (
+                  <button key={r} onClick={() => setTwrRange(r)}
+                    style={{
+                      padding: "5px 11px", fontSize: 12, borderRadius: 6, fontWeight: 500,
+                      background: twrRange === r ? "var(--paper)" : "transparent",
+                      color:      twrRange === r ? "var(--ink)"   : "var(--ink-3)",
+                      boxShadow:  twrRange === r ? "0 1px 2px rgba(0,0,0,.06)" : "none",
+                      border: "none", cursor: "pointer",
+                    }}>
+                    {r}
+                  </button>
+                ))}
+              </div>
+            }
+          >
+            <div className="card" style={{ padding: "20px 24px 12px" }}>
+              <div className="row between" style={{ marginBottom: 12, alignItems: "center" }}>
+                <span className="dim mono" style={{ fontSize: 11 }}>
+                  {twrRange === "All" ? `Since ${twrSeries[0].date}` : `Last ${twrRange}`} · index = 100 at start
+                  {" "}·{" "}
+                  <span style={{ color: chartColor, fontWeight: 600 }}>
+                    {rangeReturn >= 0 ? "+" : ""}{rangeReturn.toFixed(2)}%
+                  </span>
+                  {rangeAlpha != null && (
+                    <>
+                      {" "}·{" "}
+                      <span style={{ color: rangeAlpha >= 0 ? "var(--gain)" : "var(--loss)", fontWeight: 600 }}>
+                        {rangeAlpha >= 0 ? "+" : ""}{rangeAlpha.toFixed(2)}% vs {bmLabel}
+                      </span>
+                    </>
+                  )}
+                  {!hasBenchmark && (
+                    <span style={{ marginLeft: 8, color: "var(--ink-3)" }} title={`${bmLabel} comparison appears once the benchmark covers the whole selected range.`}>
+                      · benchmark data accumulating
+                    </span>
+                  )}
+                </span>
+                {twrRange === "All" && performance.twr_start_reason && (
+                  <span className="mono" style={{ fontSize: 11, color: "var(--gold)" }} title={performance.twr_start_reason}>
+                    ⚠ starts {performance.twr_start_date} — earlier data unreliable
+                  </span>
+                )}
+              </div>
+              <TwrChart
+                series={chartSeries}
+                xLabels={twrSeries.map(p => p.date.slice(5))}
+                height={260}
+                yLabel="Index (start = 100)"
+              />
+            </div>
+          </Section>
+        );
+      })()}
+
+      {/* Monthly performance — market gain vs. deposits, per calendar month */}
+      {performance && performance.monthly && performance.monthly.length > 0 && (() => {
+        const rows = performance.monthly;
+        const reliable = rows.filter(m => !m.unreliable);
+        const best  = reliable.reduce((a, m) => (a == null || m.return_pct > a.return_pct) ? m : a, null);
+        const worst = reliable.reduce((a, m) => (a == null || m.return_pct < a.return_pct) ? m : a, null);
+        const wins  = reliable.filter(m => m.return_pct > 0).length;
+        const totalGain = reliable.reduce((s, m) => s + (m.market_gain || 0), 0);
+        const hoverRow = monthHover || rows[rows.length - 1];
+        const monthName = m => {
+          const [yy, mm] = m.split("-");
+          return new Date(+yy, +mm - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+        };
+        const monthShort = m => {
+          const [yy, mm] = m.split("-");
+          return new Date(+yy, +mm - 1, 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+        };
+        const pctCell = (v, { bold } = {}) => v == null
+          ? <span className="dim">—</span>
+          : <span style={{ color: v > 0 ? "var(--gain)" : v < 0 ? "var(--loss)" : "var(--ink-2)", fontWeight: bold ? 600 : 400 }}>{fmt.PCT(v)}</span>;
+        const sarCell = (v, { signed = true, tone = true } = {}) => v == null
+          ? <span className="dim">—</span>
+          : <span style={{ color: tone ? (v > 0 ? "var(--gain)" : v < 0 ? "var(--loss)" : "var(--ink-2)") : "var(--ink)" }}>{fmt.SAR(v, { sign: signed, decimals: 0 })}</span>;
+        return (
+          <Section
+            eyebrow="Monthly Performance"
+            title="What the market did each month, deposits stripped out"
+            action={
               <span className="dim mono" style={{ fontSize: 11 }}>
-                index = 100 on {performance.twr_start_date}
-                {performance.twr_start_reason && (
-                  <span style={{ marginLeft: 8, color: "var(--gold)" }} title={performance.twr_start_reason}>⚠ data gap</span>
+                {reliable.length} of {rows.length} months measurable
+                {rows.some(m => m.unreliable) && (
+                  <span style={{ marginLeft: 8, color: "var(--gold)" }}
+                        title="Months before the TWR start date have snapshots, but deposits didn't reconcile with value changes, so no return is shown.">
+                    ⚠ hatched = data gap
+                  </span>
                 )}
               </span>
-            )
-          }
-        >
-          {/* Four distinct metric KPIs */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16, marginBottom: 24 }}>
-            <KPI
-              label="True Return (TWR)"
-              value={performance.twr_cumulative_return_pct !== null ? fmt.PCT(performance.twr_cumulative_return_pct, { sign: true }) : "—"}
-              accent={performance.twr_cumulative_return_pct >= 0 ? "var(--gain)" : "var(--loss)"}
-              sub={<span className="dim" style={{ fontSize: 11 }}>Each riyal in, adjusted for timing of deposits</span>}
-              large
-            />
-            <KPI
-              label="Unrealized P&L"
-              value={performance.unrealized_pnl !== null ? fmt.SAR(performance.unrealized_pnl, { sign: true }) : "—"}
-              accent={performance.unrealized_pnl >= 0 ? "var(--gain)" : "var(--loss)"}
-              sub={<span className="dim" style={{ fontSize: 11 }}>Open positions: what you'd net selling today</span>}
-            />
-            <KPI
-              label="Realized P&L"
-              value={performance.realized_pnl !== null ? fmt.SAR(performance.realized_pnl, { sign: true }) : "—"}
-              accent={performance.realized_pnl >= 0 ? "var(--gain)" : "var(--loss)"}
-              sub={<span className="dim" style={{ fontSize: 11 }}>Closed trades: profit already banked</span>}
-            />
-            <KPI
-              label="Net P&L (All Trades)"
-              value={performance.net_pnl !== null ? fmt.SAR(performance.net_pnl, { sign: true }) : "—"}
-              accent={performance.net_pnl >= 0 ? "var(--gain)" : "var(--loss)"}
-              sub={<span className="dim" style={{ fontSize: 11 }}>Unrealized + realized · total SAR result</span>}
-            />
-          </div>
-
-          {/* Range selector + chart */}
-          {twrSeries.length > 1 && (() => {
-            const rangeReturn = twrSeries[twrSeries.length - 1].twr_index_r - 100;
-            const chartColor = rangeReturn >= 0 ? "var(--gain)" : "var(--loss)";
-            // Only draw the benchmark line once it covers the whole visible
-            // range — a partial line (nulls at the start) would corrupt the
-            // chart's scale. It fills in day by day as capture accumulates.
-            const hasBenchmark = twrSeries.every(p => p.benchmark_index_r != null);
-            const chartSeries = [
-              {
-                label: "Face Value (indexed)",
-                values: twrSeries.map(p => p.face_index_r),
-                color: "var(--muted)",
-                dash: true,
-              },
-              {
-                label: "True Performance (TWR)",
-                values: twrSeries.map(p => p.twr_index_r),
-                color: chartColor,
-              },
-            ];
-            if (hasBenchmark) {
-              chartSeries.push({
-                label: performance.benchmark_symbol === "^GSPC" ? "S&P 500" : (performance.benchmark_symbol || "Benchmark"),
-                values: twrSeries.map(p => p.benchmark_index_r),
-                color: "var(--ink-3)",
-                dash: true,
-              });
             }
-            return (
-              <div>
-                {/* Range buttons */}
-                <div className="row between" style={{ marginBottom: 12, alignItems: "center" }}>
-                  <span className="dim mono" style={{ fontSize: 11 }}>
-                    {twrRange === "All"
-                      ? `From ${performance.twr_start_date}`
-                      : `Last ${twrRange} · rebased to 100`}
-                    {" "}·{" "}
-                    <span style={{ color: rangeReturn >= 0 ? "var(--gain)" : "var(--loss)", fontWeight: 600 }}>
-                      {rangeReturn >= 0 ? "+" : ""}{rangeReturn.toFixed(2)}%
-                    </span>
-                    {hasBenchmark && performance.benchmark_alpha_pct !== null && (
-                      <>
-                        {" "}·{" "}
-                        <span style={{ color: performance.benchmark_alpha_pct >= 0 ? "var(--gain)" : "var(--loss)", fontWeight: 600 }}>
-                          {performance.benchmark_alpha_pct >= 0 ? "+" : ""}{performance.benchmark_alpha_pct.toFixed(2)}% vs S&amp;P 500
-                        </span>
-                      </>
-                    )}
-                    {!hasBenchmark && (
-                      <span style={{ marginLeft: 8, color: "var(--ink-3)" }} title="Benchmark comparison appears once enough days of S&P 500 data have been collected.">
-                        · benchmark data accumulating
-                      </span>
-                    )}
-                  </span>
-                  <div className="row gap-2" style={{ background: "var(--paper-2)", border: "1px solid var(--line)", borderRadius: 8, padding: 3 }}>
-                    {TWR_RANGES.map(r => (
-                      <button key={r} onClick={() => setTwrRange(r)}
-                        style={{
-                          padding: "5px 11px", fontSize: 12, borderRadius: 6, fontWeight: 500,
-                          background: twrRange === r ? "var(--paper)" : "transparent",
-                          color:      twrRange === r ? "var(--ink)"   : "var(--ink-3)",
-                          boxShadow:  twrRange === r ? "0 1px 2px rgba(0,0,0,.06)" : "none",
-                          border: "none", cursor: "pointer",
-                        }}>
-                        {r}
-                      </button>
-                    ))}
-                  </div>
+          >
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
+              <KPI
+                label="Market gain · all months"
+                value={fmt.SAR(totalGain, { sign: true, decimals: 0 })}
+                suffix="SAR"
+                accent={totalGain >= 0 ? "var(--gain)" : "var(--loss)"}
+                sub={<span className="dim" style={{ fontSize: 11 }}>Sum of monthly gains, deposits excluded</span>}
+              />
+              <KPI
+                label="Best month"
+                value={best ? fmt.PCT(best.return_pct) : "—"}
+                accent="var(--gain)"
+                sub={<span className="dim" style={{ fontSize: 11 }}>{best ? `${monthName(best.month)} · ${fmt.SAR(best.market_gain, { sign: true, decimals: 0 })} SAR` : "No measurable month yet"}</span>}
+              />
+              <KPI
+                label="Worst month"
+                value={worst ? fmt.PCT(worst.return_pct) : "—"}
+                accent={worst && worst.return_pct < 0 ? "var(--loss)" : "var(--ink)"}
+                sub={<span className="dim" style={{ fontSize: 11 }}>{worst ? `${monthName(worst.month)} · ${fmt.SAR(worst.market_gain, { sign: true, decimals: 0 })} SAR` : "No measurable month yet"}</span>}
+              />
+              <KPI
+                label="Positive months"
+                value={reliable.length ? `${wins} / ${reliable.length}` : "—"}
+                sub={<span className="dim" style={{ fontSize: 11 }}>{reliable.length ? `${Math.round(wins / reliable.length * 100)}% of measured months closed up` : "Waiting for a full month of data"}</span>}
+              />
+            </div>
+
+            <div className="card" style={{ padding: "20px 24px 12px" }}>
+              <div className="row between" style={{ alignItems: "baseline", marginBottom: 8 }}>
+                <div className="eyebrow">Return by month · TWR</div>
+                <div className="dim mono" style={{ fontSize: 11 }}>
+                  {hoverRow && (
+                    <>
+                      <span style={{ color: "var(--ink)" }}>{monthName(hoverRow.month)}</span>
+                      {hoverRow.unreliable
+                        ? <span style={{ marginLeft: 8, color: "var(--gold)" }}>data gap · no return</span>
+                        : <>
+                            {" "}· {pctCell(hoverRow.return_pct, { bold: true })}
+                            {" "}· {sarCell(hoverRow.market_gain)} SAR
+                            {hoverRow.benchmark_pct != null && <> · S&amp;P {pctCell(hoverRow.benchmark_pct)}</>}
+                            {hoverRow.partial_start && <span style={{ marginLeft: 8, opacity: 0.7 }}>partial month</span>}
+                          </>}
+                    </>
+                  )}
+                  <span style={{ marginLeft: 12, opacity: 0.7 }}>— tick = S&amp;P 500</span>
                 </div>
-                <TwrChart
-                  series={chartSeries}
-                  xLabels={twrSeries.map(p => p.date.slice(5))}
-                  height={260}
-                  yLabel="Index (start = 100)"
-                />
               </div>
-            );
-          })()}
-        </Section>
-      )}
+              <MonthlyReturnBars data={rows} height={220} onHover={setMonthHover} />
+            </div>
+
+            <div className="card" style={{ overflow: "hidden" }}>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>Month</th>
+                    <th className="num-cell right">Start</th>
+                    <th className="num-cell right">Deposits</th>
+                    <th className="num-cell right">Withdrawals</th>
+                    <th className="num-cell right">End</th>
+                    <th className="num-cell right">Market gain</th>
+                    <th className="num-cell right">Return</th>
+                    <th className="num-cell right">S&amp;P 500</th>
+                    <th className="num-cell right">vs. market</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...rows].reverse().map((m, i) => (
+                    <tr key={m.month}
+                        onMouseEnter={() => setMonthHover(m)} onMouseLeave={() => setMonthHover(null)}
+                        style={{ opacity: m.unreliable ? 0.6 : 1 }}>
+                      <td>
+                        <div className="row gap-8">
+                          <span style={{ fontWeight: 500 }}>{monthShort(m.month)}</span>
+                          {i === 0 && !m.unreliable && <span className="chip">to date</span>}
+                          {m.partial_start && !m.unreliable && <span className="chip" title="History starts part-way through this month">partial</span>}
+                          {m.unreliable && <span className="chip" style={{ color: "var(--gold)" }} title="Deposits in this month didn't reconcile with value changes — return not measurable">data gap</span>}
+                        </div>
+                      </td>
+                      <td className="num-cell right">{fmt.SAR(m.start_value, { decimals: 0 })}</td>
+                      <td className="num-cell right">{m.deposits ? <span style={{ color: "var(--ink-2)" }}>+{fmt.SAR(m.deposits, { decimals: 0 })}</span> : <span className="dim">—</span>}</td>
+                      <td className="num-cell right">{m.withdrawals ? <span style={{ color: "var(--ink-2)" }}>−{fmt.SAR(m.withdrawals, { decimals: 0 })}</span> : <span className="dim">—</span>}</td>
+                      <td className="num-cell right">{fmt.SAR(m.end_value, { decimals: 0 })}</td>
+                      <td className="num-cell right">{sarCell(m.market_gain)}</td>
+                      <td className="num-cell right">{pctCell(m.return_pct, { bold: true })}</td>
+                      <td className="num-cell right">{pctCell(m.benchmark_pct)}</td>
+                      <td className="num-cell right">{pctCell(m.alpha_pct)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="dim" style={{ fontSize: 11.5, padding: "10px 16px", borderTop: "1px solid var(--line)" }}>
+                Market gain = end − start − deposits + withdrawals. Return is the time-weighted return for the month, so a salary deposit on the 1st never counts as a gain.
+              </div>
+            </div>
+          </Section>
+        );
+      })()}
 
       {/* Allocation */}
       <Section eyebrow="Allocation"
@@ -292,7 +400,7 @@ const Analytics = ({ data, onSendReport }) => {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 16 }}>
           <div className="card" style={{ padding: 24 }}>
             <div className="row between">
-              <div className="eyebrow">Current snapshot</div>
+              <div className="eyebrow">Open positions · excl. cash</div>
               <span className="mono dim" style={{ fontSize: 11 }}>{fmt.SAR(summary.portfolio_value, { decimals: 0 })} SAR</span>
             </div>
             <div className="row gap-24" style={{ marginTop: 16, alignItems: "center" }}>
@@ -354,95 +462,6 @@ const Analytics = ({ data, onSendReport }) => {
             <div className="dim" style={{ fontSize: 11.5, marginTop: 8 }}>
               Stacked monthly value (SAR) by asset class, normalized to total.
             </div>
-          </div>
-        </div>
-      </Section>
-
-      {/* P&L */}
-      <Section eyebrow="Profit & Loss" title="Where the gains come from">
-        <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16 }}>
-          <div className="col gap-12">
-            <div className="card" style={{ padding: 20 }}>
-              <div className="eyebrow">Total realized</div>
-              <div className="hero-num" style={{ marginTop: 8, color: pnl.summary.total_realized >= 0 ? "var(--gain)" : "var(--loss)" }}>
-                <span className="arrow" style={{ fontSize: 14, marginRight: 4 }}>{pnl.summary.total_realized >= 0 ? "▲" : "▼"}</span>
-                {fmt.SAR(Math.abs(pnl.summary.total_realized), { decimals: 0 })}
-              </div>
-              <div className="dim" style={{ fontSize: 12, marginTop: 6 }}>
-                Across {pnl.summary.total_sells} sells · Avg win {fmt.SAR(pnl.summary.avg_win, { decimals: 0 })}, avg loss {fmt.SAR(pnl.summary.avg_loss, { decimals: 0 })}
-              </div>
-            </div>
-            <div className="card" style={{ padding: 20 }}>
-              <div className="eyebrow">Total unrealized</div>
-              <div className="hero-num" style={{ marginTop: 8, color: pnl.summary.total_unrealized >= 0 ? "var(--gain)" : "var(--loss)" }}>
-                <span className="arrow" style={{ fontSize: 14, marginRight: 4 }}>{pnl.summary.total_unrealized >= 0 ? "▲" : "▼"}</span>
-                {fmt.SAR(Math.abs(pnl.summary.total_unrealized), { decimals: 0 })}
-              </div>
-              <div className="dim" style={{ fontSize: 12, marginTop: 6 }}>
-                On {pnl.by_asset.length} open positions. Marked to live prices.
-              </div>
-            </div>
-            <div className="card" style={{ padding: 20 }}>
-              <div className="row between">
-                <div className="eyebrow">Win rate</div>
-                <span className="mono dim" style={{ fontSize: 10 }}>{pnl.summary.winning_sells}/{pnl.summary.total_sells}</span>
-              </div>
-              <div style={{ marginTop: 12 }}>
-                <div style={{ height: 8, background: "var(--line-2)", borderRadius: 4, overflow: "hidden" }}>
-                  <div style={{ width: `${pnl.summary.win_rate_pct}%`, height: "100%", background: "var(--accent)" }} />
-                </div>
-                <div className="row between" style={{ marginTop: 8, fontSize: 12 }}>
-                  <span className="dim">{pnl.summary.win_rate_pct.toFixed(1)}% wins</span>
-                  <span className="dim">{(100 - pnl.summary.win_rate_pct).toFixed(1)}% losses</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="card" style={{ overflow: "hidden" }}>
-            <div className="row between" style={{ padding: "16px 20px" }}>
-              <h4 className="serif" style={{ fontSize: 18 }}>P&L by asset</h4>
-              <div className="dim" style={{ fontSize: 11.5 }}>Click any column to sort</div>
-            </div>
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <SortTh label="Asset"    col="name"        sortState={pnlSort} onToggle={mkToggle(setPnlSort)} />
-                  <SortTh label="Type"     col="asset_type"  sortState={pnlSort} onToggle={mkToggle(setPnlSort)} />
-                  <SortTh label="Realized"   col="realized"   sortState={pnlSort} onToggle={mkToggle(setPnlSort)} cls="num-cell right" />
-                  <SortTh label="Unrealized" col="unrealized" sortState={pnlSort} onToggle={mkToggle(setPnlSort)} cls="num-cell right" />
-                  <SortTh label="Total"      col="total"      sortState={pnlSort} onToggle={mkToggle(setPnlSort)} cls="num-cell right" />
-                  <SortTh label="Return %"   col="return_pct" sortState={pnlSort} onToggle={mkToggle(setPnlSort)} cls="num-cell right" />
-                  <th style={{ width: 120 }}>Contribution</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortRows(pnl.by_asset, pnlSort).map((row, i) => {
-                  const maxAbs = Math.max(...pnl.by_asset.map(r => Math.abs(r.total)));
-                  const w = (Math.abs(row.total) / maxAbs) * 100;
-                  return (
-                    <tr key={i}>
-                      <td style={{ fontWeight: 500 }}>{row.name}</td>
-                      <td><TypeChip type={row.asset_type} /></td>
-                      <td className="num-cell right">
-                        {row.realized !== 0 ? <Delta value={row.realized} /> : <span className="dim">—</span>}
-                      </td>
-                      <td className="num-cell right"><Delta value={row.unrealized} /></td>
-                      <td className="num-cell right" style={{ fontWeight: 500 }}><Delta value={row.total} /></td>
-                      <td className="num-cell right"><Delta value={row.return_pct} suffix="%" /></td>
-                      <td>
-                        <div style={{ height: 6, background: "var(--line-2)", borderRadius: 3, overflow: "hidden" }}>
-                          <div style={{
-                            width: `${w}%`, height: "100%",
-                            background: row.total >= 0 ? "var(--gain)" : "var(--loss)",
-                          }} />
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
           </div>
         </div>
       </Section>
@@ -539,20 +558,26 @@ const Analytics = ({ data, onSendReport }) => {
 
       {/* Scoreboard */}
       <Section eyebrow="All-Time Scoreboard" title="Every position, ranked"
-               action={<div className="dim" style={{ fontSize: 12 }}>Open and closed positions, sorted by total P&L.</div>}>
+               action={
+                 <div className="dim mono" style={{ fontSize: 11 }}>
+                   {scoreboard.length} positions · {scoreboard.filter(s => s.status === "open").length} open · {scoreboard.filter(s => s.status === "closed").length} closed · click a column to sort
+                 </div>
+               }>
         <div className="card" style={{ overflow: "hidden" }}>
           <table className="tbl">
             <thead>
               <tr>
                 <th style={{ width: 40 }}>#</th>
-                <SortTh label="Asset"        col="name"         sortState={sbSort} onToggle={mkToggle(setSbSort)} />
-                <SortTh label="Type"         col="asset_type"   sortState={sbSort} onToggle={mkToggle(setSbSort)} />
+                <SortTh label="Asset"        col="name"           sortState={sbSort} onToggle={mkToggle(setSbSort)} />
+                <SortTh label="Type"         col="asset_type"     sortState={sbSort} onToggle={mkToggle(setSbSort)} />
                 <th>Status</th>
-                <SortTh label="Invested"     col="invested"     sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
-                <SortTh label="Market Value" col="market_value" sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
-                <SortTh label="Total P&L"    col="total_pnl"    sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
-                <SortTh label="Return %"     col="return_pct"   sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
-                <SortTh label="First bought" col="first_bought" sortState={sbSort} onToggle={mkToggle(setSbSort)} />
+                <SortTh label="Invested"     col="invested"       sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
+                <SortTh label="Market Value" col="market_value"   sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
+                <SortTh label="Realized"     col="realized_pnl"   sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
+                <SortTh label="Unrealized"   col="unrealized_pnl" sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
+                <SortTh label="Total P&L"    col="total_pnl"      sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
+                <SortTh label="Return %"     col="return_pct"     sortState={sbSort} onToggle={mkToggle(setSbSort)} cls="num-cell right" />
+                <SortTh label="First bought" col="first_bought"   sortState={sbSort} onToggle={mkToggle(setSbSort)} />
                 <th style={{ width: 32 }}></th>
               </tr>
             </thead>
@@ -580,8 +605,10 @@ const Analytics = ({ data, onSendReport }) => {
                           : <span className="chip gold" style={{ background: "var(--gain-soft)", color: "var(--gain)" }}>● Open</span>
                         }
                       </td>
-                      <td className="num-cell right dim">{fmt.SAR(s.invested, { decimals: 0 })}</td>
-                      <td className="num-cell right">{fmt.SAR(s.market_value, { decimals: 0 })}</td>
+                      <td className="num-cell right dim" title="Sum of every buy ever made in this asset">{fmt.SAR(s.invested, { decimals: 0 })}</td>
+                      <td className="num-cell right">{s.market_value ? fmt.SAR(s.market_value, { decimals: 0 }) : <span className="dim">—</span>}</td>
+                      <td className="num-cell right">{s.realized_pnl ? <Delta value={s.realized_pnl} /> : <span className="dim">—</span>}</td>
+                      <td className="num-cell right">{s.status === "open" ? <Delta value={s.unrealized_pnl} /> : <span className="dim">—</span>}</td>
                       <td className="num-cell right" style={{ fontWeight: 500 }}><Delta value={s.total_pnl} /></td>
                       <td className="num-cell right"><Delta value={s.return_pct} suffix="%" /></td>
                       <td className="mono dim" style={{ fontSize: 11.5 }}>{s.first_bought}</td>
@@ -591,7 +618,7 @@ const Analytics = ({ data, onSendReport }) => {
                     </tr>
                     {isExpanded && isOpen && (
                       <tr>
-                        <td colSpan={10} style={{ padding: "4px 16px 18px", background: "var(--paper-2)" }}>
+                        <td colSpan={12} style={{ padding: "4px 16px 18px", background: "var(--paper-2)" }}>
                           {history === undefined || history === null ? (
                             <div className="dim" style={{ fontSize: 12, padding: "10px 0" }}>Loading price history…</div>
                           ) : history.length < 2 ? (
@@ -621,19 +648,15 @@ const Analytics = ({ data, onSendReport }) => {
         </div>
       </Section>
 
-      {/* Footer flourish */}
+      {/* Footer */}
       <div className="row between" style={{ padding: "8px 4px", borderTop: "1px solid var(--line)" }}>
         <div className="dim" style={{ fontSize: 11.5 }}>
-          Data through {new Date().toISOString().slice(0, 10)} · Hourly snapshots · Saudi market close 15:00 Asia/Riyadh
+          Data through {(performance && performance.series.length) ? performance.series[performance.series.length - 1].date : new Date().toISOString().slice(0, 10)}
+          {" "}· Hourly snapshots · Saudi market close 15:00 Asia/Riyadh
         </div>
-        <div className="row gap-8">
-          <button className="btn xs">
-            <Icon name="mail" size={11} /> Email this
-          </button>
-          <button className="btn xs">
-            <Icon name="download" size={11} /> Export
-          </button>
-        </div>
+        <button className="btn xs" onClick={onSendReport}>
+          <Icon name="mail" size={11} /> Email this report
+        </button>
       </div>
     </div>
   );

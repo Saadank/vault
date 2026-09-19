@@ -1,7 +1,9 @@
 // Custom SVG charts: line+area, sparkline, donut, stacked bar, bar pair.
 
 // ---- Line/Area chart ----
-const AreaChart = ({ data, height = 280, accent = "var(--accent)", showAxes = true, onHover }) => {
+// valueFormat: "money" (SAR, default) or "pct" — used by the dashboard's Growth
+// view, where `value` is a % return and each point also carries `total_value`.
+const AreaChart = ({ data, height = 280, accent = "var(--accent)", showAxes = true, onHover, valueFormat = "money" }) => {
   const wrapRef = React.useRef(null);
   const [w, setW] = React.useState(960);
   const [hoverIdx, setHoverIdx] = React.useState(null);
@@ -22,8 +24,10 @@ const AreaChart = ({ data, height = 280, accent = "var(--accent)", showAxes = tr
   const innerW = Math.max(10, w - padL - padR);
   const innerH = Math.max(10, height - padT - padB);
 
+  const isPct = valueFormat === "pct";
   const values = data.map(d => d.value);
   let min = Math.min(...values), max = Math.max(...values);
+  if (isPct) { min = Math.min(min, 0); max = Math.max(max, 0); }   // always show the 0% baseline
   const range = (max - min) || 1;
   min -= range * 0.05; max += range * 0.05;
 
@@ -32,7 +36,8 @@ const AreaChart = ({ data, height = 280, accent = "var(--accent)", showAxes = tr
 
   // Smooth path via Catmull-Rom-ish
   const linePath = data.map((d, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(2)},${y(d.value).toFixed(2)}`).join(" ");
-  const areaPath = `${linePath} L${x(data.length - 1).toFixed(2)},${(padT + innerH).toFixed(2)} L${x(0).toFixed(2)},${(padT + innerH).toFixed(2)} Z`;
+  const areaBase = isPct ? y(0) : padT + innerH;   // growth view fills toward the 0% line
+  const areaPath = `${linePath} L${x(data.length - 1).toFixed(2)},${areaBase.toFixed(2)} L${x(0).toFixed(2)},${areaBase.toFixed(2)} Z`;
 
   // Y axis tick values
   const ticks = 4;
@@ -46,6 +51,7 @@ const AreaChart = ({ data, height = 280, accent = "var(--accent)", showAxes = tr
   })();
 
   const fmtMoney = v => {
+    if (isPct) return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(1) + "%";
     if (v >= 1e6) return (v / 1e6).toFixed(1) + "M";
     if (v >= 1e3) return Math.round(v / 1e3) + "K";
     return Math.round(v).toString();
@@ -117,6 +123,10 @@ const AreaChart = ({ data, height = 280, accent = "var(--accent)", showAxes = tr
             {fmtDate(data[i].date)}
           </text>
         ))}
+        {/* 0% baseline (growth view only) */}
+        {isPct && (
+          <line x1={padL} x2={w - padR} y1={y(0)} y2={y(0)} stroke="var(--ink)" strokeOpacity="0.35" strokeWidth="1" />
+        )}
         {/* area + line */}
         <path d={areaPath} fill={`url(#${id})`} />
         <path d={linePath} fill="none" stroke={accent} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
@@ -155,10 +165,25 @@ const AreaChart = ({ data, height = 280, accent = "var(--accent)", showAxes = tr
             whiteSpace: "nowrap",
           }}>
             <div style={{ opacity: 0.6, fontSize: 11, fontFamily: "Geist Mono, monospace" }}>{data[hoverIdx].date}</div>
-            <div style={{ fontFamily: "Instrument Serif, serif", fontSize: 20, lineHeight: 1.1, marginTop: 2 }}>
-              {VAULT_DATA.fmt.SAR(data[hoverIdx].value, { decimals: 0 })}
-              <span style={{ fontFamily: "Geist", fontSize: 11, marginLeft: 4, opacity: 0.6 }}>SAR</span>
-            </div>
+            {isPct ? (
+              <>
+                <div style={{ fontFamily: "Instrument Serif, serif", fontSize: 20, lineHeight: 1.1, marginTop: 2,
+                              color: data[hoverIdx].value >= 0 ? "#7fd1a0" : "#f0908a" }}>
+                  {VAULT_DATA.fmt.PCT(data[hoverIdx].value)}
+                </div>
+                {data[hoverIdx].total_value != null && (
+                  <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>
+                    {VAULT_DATA.fmt.SAR(data[hoverIdx].total_value, { decimals: 0 })} SAR
+                    {data[hoverIdx].net_flow ? ` · ${VAULT_DATA.fmt.SAR(data[hoverIdx].net_flow, { sign: true, decimals: 0 })} deposit` : ""}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ fontFamily: "Instrument Serif, serif", fontSize: 20, lineHeight: 1.1, marginTop: 2 }}>
+                {VAULT_DATA.fmt.SAR(data[hoverIdx].value, { decimals: 0 })}
+                <span style={{ fontFamily: "Geist", fontSize: 11, marginLeft: 4, opacity: 0.6 }}>SAR</span>
+              </div>
+            )}
           </div>
         );
       })()}
@@ -321,6 +346,113 @@ const PairedBars = ({ data, keys = ["a", "b"], colors = ["var(--accent)", "var(-
               <text x={cx} y={height - 6} textAnchor="middle"
                     style={{ fontFamily: "Geist Mono, monospace", fontSize: 10, fill: "var(--ink-3)" }}>
                 {formatX ? formatX(d) : (d.label || d.month?.slice(-2))}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+};
+
+// ---- Monthly return bars (signed) ----
+// data: [{ month: "YYYY-MM", return_pct: number|null, benchmark_pct: number|null, unreliable: bool }]
+// Green/red bars around a 0% baseline; a short dark tick marks the benchmark
+// for the same month when available. Months without a return draw a hatched
+// placeholder so the gap is visible instead of silently skipped.
+const MonthlyReturnBars = ({ data, height = 200, onHover }) => {
+  const wrapRef = React.useRef(null);
+  const [w, setW] = React.useState(720);
+  const [hoverIdx, setHoverIdx] = React.useState(null);
+  React.useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const e of entries) setW(Math.floor(e.contentRect.width));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  if (!data || data.length === 0) return <div ref={wrapRef} style={{ height }} />;
+
+  const padL = 40, padR = 8, padT = 18, padB = 24;
+  const innerW = Math.max(20, w - padL - padR);
+  const innerH = height - padT - padB;
+  const groupW = innerW / data.length;
+  const barW = Math.min(36, groupW * 0.55);
+
+  const vals = data.flatMap(d => [d.return_pct, d.benchmark_pct]).filter(v => v != null);
+  let rawMax = Math.max(0, ...vals), rawMin = Math.min(0, ...vals);
+  if (rawMax === rawMin) { rawMax = 1; rawMin = -1; }
+  const span = rawMax - rawMin;
+  const max = rawMax + span * 0.12, min = rawMin - span * 0.12;   // headroom for value labels
+  const y = v => padT + (1 - (v - min) / (max - min)) * innerH;
+  const y0 = y(0);
+
+  const fmtPct = v => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(1) + "%";
+  const fmtMonth = m => {
+    const [yy, mm] = m.split("-");
+    const d = new Date(+yy, +mm - 1, 1);
+    return d.toLocaleDateString("en-US", { month: "short" }) + (mm === "01" || m === data[0].month ? ` '${yy.slice(2)}` : "");
+  };
+  // Gridlines at the extremes, their midpoints and 0 (deduped when an extreme is 0)
+  const ticks = [rawMax, rawMax / 2, 0, rawMin / 2, rawMin]
+    .filter((v, i, a) => a.findIndex(x => Math.abs(x - v) < 1e-9) === i);
+
+  return (
+    <div ref={wrapRef} style={{ width: "100%", position: "relative" }}>
+      <svg width={w} height={height} style={{ display: "block" }}
+           onMouseLeave={() => { setHoverIdx(null); onHover && onHover(null); }}>
+        <defs>
+          <pattern id="mrb-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke="var(--line)" strokeWidth="2" />
+          </pattern>
+        </defs>
+        {ticks.map((v, i) => (
+          <g key={i}>
+            <line x1={padL} x2={w - padR} y1={y(v)} y2={y(v)}
+                  stroke={v === 0 ? "var(--ink)" : "var(--line-2)"}
+                  strokeOpacity={v === 0 ? 0.35 : 1}
+                  strokeDasharray={v === 0 ? "0" : "2 4"} />
+            <text x={padL - 8} y={y(v) + 3} textAnchor="end"
+                  style={{ fontFamily: "Geist Mono, monospace", fontSize: 10, fill: "var(--ink-3)" }}>
+              {fmtPct(v)}
+            </text>
+          </g>
+        ))}
+        {data.map((d, i) => {
+          const cx = padL + i * groupW + groupW / 2;
+          const v = d.return_pct;
+          const has = v != null;
+          const up = has && v >= 0;
+          const top = has ? Math.min(y(v), y0) : y0 - 14;
+          const h = has ? Math.max(1, Math.abs(y(v) - y0)) : 28;
+          const hovered = hoverIdx === i;
+          return (
+            <g key={d.month}
+               onMouseEnter={() => { setHoverIdx(i); onHover && onHover(d, i); }}
+               style={{ cursor: "default" }}>
+              {/* invisible hit area for the whole column */}
+              <rect x={padL + i * groupW} y={padT} width={groupW} height={innerH} fill="transparent" />
+              <rect x={cx - barW / 2} y={top} width={barW} height={h} rx="3"
+                    fill={has ? (up ? "var(--gain)" : "var(--loss)") : "url(#mrb-hatch)"}
+                    fillOpacity={has ? (hovered ? 1 : 0.85) : 1}
+                    stroke={has ? "none" : "var(--line)"} />
+              {has && d.benchmark_pct != null && (
+                <line x1={cx - barW / 2 - 3} x2={cx + barW / 2 + 3}
+                      y1={y(d.benchmark_pct)} y2={y(d.benchmark_pct)}
+                      stroke="var(--ink)" strokeWidth="2" strokeOpacity="0.7" />
+              )}
+              <text x={cx} y={has ? (up ? top - 5 : top + h + 11) : y0 - 18} textAnchor="middle"
+                    style={{ fontFamily: "Geist Mono, monospace", fontSize: 10.5, fontWeight: 600,
+                             fill: has ? (up ? "var(--gain)" : "var(--loss)") : "var(--ink-3)" }}>
+                {has ? fmtPct(v) : "—"}
+              </text>
+              <text x={cx} y={height - 6} textAnchor="middle"
+                    style={{ fontFamily: "Geist Mono, monospace", fontSize: 10,
+                             fill: hovered ? "var(--ink)" : "var(--ink-3)" }}>
+                {fmtMonth(d.month)}
               </text>
             </g>
           );

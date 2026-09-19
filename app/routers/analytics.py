@@ -5,7 +5,7 @@ All data is computed on-the-fly from existing tables (no separate warehouse need
 
 from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import (
@@ -13,15 +13,87 @@ from app.database import (
     HoldingPriceHistory, BenchmarkSnapshot,
 )
 from app.auth import get_current_user
-from app.routers.prices import BENCHMARK_SYMBOL
+from app.routers.prices import BENCHMARK_SYMBOL, _TYPE_MAP
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 def _month(date_str: str) -> str:
     """Extract YYYY-MM from a date string (YYYY-MM-DD or YYYY-MM-DD HH)."""
     return date_str[:7] if date_str else ""
+
+
+async def _load_snapshots(db: AsyncSession, user_id: int) -> tuple[list, float]:
+    """
+    Load every PortfolioSnapshot row for a user and collapse them to one row
+    per calendar day (the latest created_at wins, so a day with hourly rows
+    resolves to its most recent hour).
+
+    Snapshot dates are either "YYYY-MM-DD" (legacy daily job) or
+    "YYYY-MM-DD HH" (hourly job). Filtering on the 10-char form alone silently
+    freezes at the last legacy row once hourly capture takes over, which is
+    how the Overview KPIs ended up weeks stale.
+
+    Returns (daily_snapshots_sorted, peak_value_across_all_rows).
+    """
+    result = await db.execute(
+        select(PortfolioSnapshot)
+        .where(PortfolioSnapshot.user_id == user_id)
+        .order_by(PortfolioSnapshot.snapshot_date, PortfolioSnapshot.created_at)
+    )
+    all_rows = result.scalars().all()
+
+    day_map: dict[str, object] = {}
+    for s in all_rows:
+        day = s.snapshot_date[:10]
+        if day not in day_map or (
+            s.created_at and day_map[day].created_at and s.created_at > day_map[day].created_at
+        ):
+            day_map[day] = s
+    daily = sorted(day_map.values(), key=lambda s: s.snapshot_date[:10])
+    peak = max((s.total_value or 0 for s in all_rows), default=0.0)
+    return daily, peak
+
+
+async def _asset_type_map(db: AsyncSession, user_id: int) -> dict[str, str]:
+    """
+    Best-known asset type for every name the user has ever held.
+    Open holdings win; closed ones (quantity 0, or deleted entirely) fall back
+    to the most recent HoldingSnapshot that recorded them.
+    """
+    types: dict[str, str] = {}
+    try:
+        hs_result = await db.execute(
+            select(HoldingSnapshot.name, HoldingSnapshot.asset_type)
+            .where(HoldingSnapshot.user_id == user_id)
+            .order_by(HoldingSnapshot.snapshot_date)
+        )
+        for name, asset_type in hs_result.all():
+            if name and asset_type:
+                types[name] = asset_type   # later rows overwrite earlier ones
+    except Exception:
+        pass  # table missing on a fresh deploy — holdings below still cover open names
+    h_result = await db.execute(select(Holding).where(Holding.user_id == user_id))
+    for h in h_result.scalars().all():
+        if h.asset_type:
+            types[h.name] = h.asset_type
+    # A few legacy rows still carry Yahoo's raw quoteType ("EQUITY") — normalize.
+    return {n: _TYPE_MAP.get(t, t) for n, t in types.items()}
+
+
+def _sell_stats(transactions: list) -> dict:
+    """Win-rate style stats over SELL rows that carry a realized P&L."""
+    sells = [t for t in transactions if t.tx_type == "SELL" and t.realized_pnl is not None]
+    wins = [s for s in sells if s.realized_pnl > 0]
+    losses = [s for s in sells if s.realized_pnl < 0]
+    return {
+        "total_sells": len(sells),
+        "winning_sells": len(wins),
+        "win_rate_pct": round(len(wins) / len(sells) * 100, 1) if sells else 0.0,
+        "avg_win": round(sum(s.realized_pnl for s in wins) / len(wins), 2) if wins else 0.0,
+        "avg_loss": round(sum(s.realized_pnl for s in losses) / len(losses), 2) if losses else 0.0,
+    }
 
 
 # ── 1. Overview KPIs ──────────────────────────────────────────────────────────
@@ -30,91 +102,60 @@ async def analytics_overview(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    # Portfolio snapshots for return metrics (daily only: 10-char dates)
-    snap_result = await db.execute(
-        select(PortfolioSnapshot)
-        .where(
-            PortfolioSnapshot.user_id == user.id,
-            func.length(PortfolioSnapshot.snapshot_date) == 10,
-        )
-        .order_by(PortfolioSnapshot.snapshot_date)
-    )
-    snaps = [s for s in snap_result.scalars().all() if s is not None]
+    """
+    Headline numbers. Every figure here is one the rest of the page can agree
+    with: the return is the deposit-adjusted TWR, the SAR result is net P&L
+    from trades, and best/worst month come from the same monthly TWR table
+    the Monthly Performance section renders.
 
-    # All SELL transactions for win rate
-    sell_result = await db.execute(
-        select(Transaction).where(
-            Transaction.user_id == user.id,
-            Transaction.tx_type == "SELL",
-            Transaction.realized_pnl.is_not(None),
-        )
-    )
-    sells = sell_result.scalars().all()
+    (An earlier version returned first-snapshot-to-now value growth here,
+    which counted every deposit as a gain and disagreed with everything else
+    on the page.)
+    """
+    snaps, peak_value = await _load_snapshots(db, user.id)
 
-    # Cash flow totals
     tx_result = await db.execute(
-        select(Transaction).where(
-            Transaction.user_id == user.id,
-            Transaction.tx_type.in_(["DEPOSIT", "WITHDRAW"]),
-        )
+        select(Transaction).where(Transaction.user_id == user.id)
     )
-    cash_txs = tx_result.scalars().all()
+    transactions = tx_result.scalars().all()
 
-    total_deposited = sum(t.total for t in cash_txs if t.tx_type == "DEPOSIT")
-    total_withdrawn = sum(t.total for t in cash_txs if t.tx_type == "WITHDRAW")
+    h_result = await db.execute(
+        select(Holding).where(Holding.user_id == user.id, Holding.quantity > 0)
+    )
+    holdings = h_result.scalars().all()
 
-    # Return metrics
-    first_value = snaps[0].total_value if snaps else None
+    total_deposited = sum(t.total or 0 for t in transactions if t.tx_type == "DEPOSIT")
+    total_withdrawn = sum(t.total or 0 for t in transactions if t.tx_type == "WITHDRAW")
+
+    # Value / drawdown — from the live (deduplicated) snapshot series
     current_value = snaps[-1].total_value if snaps else None
-    peak_value = max((s.total_value for s in snaps), default=0.0)
     current_drawdown_pct = 0.0
-    total_return_sar = 0.0
-    total_return_pct = 0.0
-
-    if first_value and first_value > 0 and current_value is not None:
-        total_return_sar = round(current_value - first_value, 2)
-        total_return_pct = round((current_value - first_value) / first_value * 100, 2)
     if peak_value > 0 and current_value is not None:
         current_drawdown_pct = round((current_value - peak_value) / peak_value * 100, 2)
 
-    # Best/worst month (group daily snapshots by month, take last value per month)
-    monthly: dict[str, float] = {}
-    for s in snaps:
-        m = _month(s.snapshot_date)
-        if m:
-            monthly[m] = s.total_value  # last snapshot of month wins
+    # Return — TWR, same computation the /performance endpoint uses
+    twr = _compute_twr(snaps, transactions)
+    monthly = _compute_monthly(twr["series"], transactions, snaps)
+    reliable = [m for m in monthly if not m["unreliable"] and m["return_pct"] is not None]
+    best = max(reliable, key=lambda m: m["return_pct"], default=None)
+    worst = min(reliable, key=lambda m: m["return_pct"], default=None)
 
-    sorted_months = sorted(monthly.keys())
-    best_month = {"month": None, "return_pct": 0.0}
-    worst_month = {"month": None, "return_pct": 0.0}
-    if len(sorted_months) >= 2:
-        returns = []
-        for i in range(1, len(sorted_months)):
-            prev = monthly[sorted_months[i - 1]]
-            curr = monthly[sorted_months[i]]
-            if prev > 0:
-                r = (curr - prev) / prev * 100
-                returns.append((sorted_months[i], round(r, 2)))
-        if returns:
-            best = max(returns, key=lambda x: x[1])
-            worst = min(returns, key=lambda x: x[1])
-            best_month = {"month": best[0], "return_pct": best[1]}
-            worst_month = {"month": worst[0], "return_pct": worst[1]}
-
-    # Win rate
-    wins = [s for s in sells if (s.realized_pnl or 0) > 0]
-    win_rate_pct = round(len(wins) / len(sells) * 100, 1) if sells else 0.0
+    # SAR result — trade-based, not snapshot-based
+    unrealized_pnl = round(sum(h.quantity * (h.current_price - h.avg_cost) for h in holdings), 2)
+    realized_pnl = round(sum(t.realized_pnl for t in transactions if t.realized_pnl is not None), 2)
 
     return {
-        "total_return_pct": total_return_pct,
-        "total_return_sar": total_return_sar,
+        "total_return_pct": twr["cumulative_return_pct"],
+        "total_return_sar": round(unrealized_pnl + realized_pnl, 2),
+        "twr_start_date": twr["twr_start_date"],
+        "current_value": round(current_value, 2) if current_value is not None else None,
         "peak_value": round(peak_value, 2),
         "current_drawdown_pct": current_drawdown_pct,
-        "best_month": best_month,
-        "worst_month": worst_month,
+        "best_month": {"month": best["month"], "return_pct": best["return_pct"]} if best else {"month": None, "return_pct": 0.0},
+        "worst_month": {"month": worst["month"], "return_pct": worst["return_pct"]} if worst else {"month": None, "return_pct": 0.0},
         "total_deposited": round(total_deposited, 2),
         "total_withdrawn": round(total_withdrawn, 2),
-        "win_rate_pct": win_rate_pct,
+        **_sell_stats(transactions),
     }
 
 
@@ -259,21 +300,12 @@ async def analytics_pnl(
     # Summary
     total_realized = round(sum(realized_map.values()), 2)
     total_unrealized = round(sum(unrealized_map.values()), 2)
-    wins = [s for s in sells if (s.realized_pnl or 0) > 0]
-    losses = [s for s in sells if (s.realized_pnl or 0) < 0]
-    win_rate_pct = round(len(wins) / len(sells) * 100, 1) if sells else 0.0
-    avg_win = round(sum(s.realized_pnl for s in wins) / len(wins), 2) if wins else 0.0
-    avg_loss = round(sum(s.realized_pnl for s in losses) / len(losses), 2) if losses else 0.0
 
     return {
         "summary": {
             "total_realized": total_realized,
             "total_unrealized": total_unrealized,
-            "win_rate_pct": win_rate_pct,
-            "avg_win": avg_win,
-            "avg_loss": avg_loss,
-            "total_sells": len(sells),
-            "winning_sells": len(wins),
+            **_sell_stats(sells),
         },
         "by_asset": by_asset,
     }
@@ -433,7 +465,6 @@ async def analytics_scoreboard(
     # Build per-asset data
     first_bought: dict[str, str] = {}
     total_invested: dict[str, float] = defaultdict(float)
-    asset_type_map: dict[str, str] = {}
 
     for b in buys:
         name = b.asset_name
@@ -446,9 +477,9 @@ async def analytics_scoreboard(
         if s.realized_pnl is not None:
             realized_pnl_map[s.asset_name] += s.realized_pnl
 
-    # Asset types from open holdings first, fallback to "—"
-    for h in open_holdings.values():
-        asset_type_map[h.name] = h.asset_type
+    # Closed positions no longer have a Holding row with quantity > 0, so
+    # their type comes from the snapshot history instead of showing "—".
+    asset_type_map = await _asset_type_map(db, user.id)
 
     # All unique asset names ever traded
     all_names = set(total_invested.keys())
@@ -466,7 +497,7 @@ async def analytics_scoreboard(
 
         rows.append({
             "name": name,
-            "asset_type": asset_type_map.get(name, h.asset_type if h else "—"),
+            "asset_type": asset_type_map.get(name, "Other"),
             "status": "open" if is_open else "closed",
             "invested": invested,
             "market_value": market_value,
@@ -482,6 +513,26 @@ async def analytics_scoreboard(
 
 
 # ── 7. True Performance (TWR) ────────────────────────────────────────────────
+
+def _daily_flows(transactions: list) -> tuple[dict, dict]:
+    """
+    Bucket external cash flows by calendar day.
+    Only DEPOSIT (+) and WITHDRAW (−) are external flows. BUY / SELL /
+    CAPITAL_INCREASE are internal moves and are excluded.
+    Returns (daily_deposit, daily_withdraw), each {YYYY-MM-DD: SAR}.
+    """
+    daily_deposit: dict[str, float] = defaultdict(float)
+    daily_withdraw: dict[str, float] = defaultdict(float)
+    for tx in transactions:
+        d = (tx.tx_date or "")[:10]
+        if not d:
+            continue
+        if tx.tx_type == "DEPOSIT":
+            daily_deposit[d] += tx.total or 0
+        elif tx.tx_type == "WITHDRAW":
+            daily_withdraw[d] += tx.total or 0
+    return daily_deposit, daily_withdraw
+
 
 def _compute_twr(
     snapshots: list,            # PortfolioSnapshot rows, pre-deduplicated & sorted
@@ -512,17 +563,7 @@ def _compute_twr(
     # ── Step 1: daily net external cash flow ─────────────────────────────────
     # Only DEPOSIT (+) and WITHDRAW (−) are external flows. BUY / SELL /
     # CAPITAL_INCREASE are internal moves and are excluded.
-    daily_deposit: dict[str, float] = defaultdict(float)
-    daily_withdraw: dict[str, float] = defaultdict(float)
-
-    for tx in transactions:
-        d = (tx.tx_date or "")[:10]
-        if not d:
-            continue
-        if tx.tx_type == "DEPOSIT":
-            daily_deposit[d] += tx.total or 0
-        elif tx.tx_type == "WITHDRAW":
-            daily_withdraw[d] += tx.total or 0
+    daily_deposit, daily_withdraw = _daily_flows(transactions)
 
     def net_flow(date: str) -> float:
         return daily_deposit[date] - daily_withdraw[date]
@@ -626,6 +667,126 @@ def _compute_twr(
     }
 
 
+def _compute_monthly(
+    series: list,           # TWR series points from _compute_twr (daily, sorted)
+    transactions: list,     # all Transaction rows for the user
+    all_snapshots: list,    # deduplicated daily PortfolioSnapshot rows (incl. pre-TWR)
+) -> list[dict]:
+    """
+    Group performance by calendar month, separating what the market did from
+    what the user deposited/withdrew.
+
+    For each month:
+      start_value  = last snapshot value of the previous month (or the first
+                     point of the month when history starts mid-month)
+      market_gain  = end_value − start_value − deposits + withdrawals
+      return_pct   = (twr_index_end / twr_index_start − 1) × 100
+                     — chain-linked from the daily series, so a mid-month
+                     deposit does not distort it.
+
+    Months that have snapshots but fall before the TWR start date (data-gap
+    window) are still listed for completeness, but with return_pct / market_gain
+    set to None and unreliable=True, because deposits in that window did not
+    reconcile with the recorded value changes.
+    """
+    daily_deposit, daily_withdraw = _daily_flows(transactions)
+
+    def sum_flows(dates: list[str]) -> tuple[float, float]:
+        return (
+            round(sum(daily_deposit[d] for d in dates), 2),
+            round(sum(daily_withdraw[d] for d in dates), 2),
+        )
+
+    by_month: dict[str, dict] = {}
+
+    # ── Reliable months: from the TWR series ─────────────────────────────────
+    groups: dict[str, list] = defaultdict(list)
+    for p in series:
+        groups[_month(p["date"])].append(p)
+
+    prev_point = None
+    for month in sorted(groups):
+        pts = groups[month]
+        end = pts[-1]
+        if prev_point is not None:
+            start_value = prev_point["total_value"]
+            start_twr   = prev_point["twr_index"]
+            start_bm    = prev_point.get("benchmark_index")
+            flow_dates  = [p["date"] for p in pts]
+            partial_start = False
+        else:
+            # First month of history: the opening point has no return of its own.
+            start_value = pts[0]["total_value"]
+            start_twr   = pts[0]["twr_index"]
+            start_bm    = pts[0].get("benchmark_index")
+            flow_dates  = [p["date"] for p in pts[1:]]
+            partial_start = True
+
+        deposits, withdrawals = sum_flows(flow_dates)
+        market_gain = round(end["total_value"] - start_value - deposits + withdrawals, 2)
+        return_pct  = round((end["twr_index"] / start_twr - 1) * 100, 2) if start_twr else None
+
+        end_bm = end.get("benchmark_index")
+        benchmark_pct = (
+            round((end_bm / start_bm - 1) * 100, 2)
+            if start_bm and end_bm is not None else None
+        )
+
+        by_month[month] = {
+            "month": month,
+            "start_value": round(start_value, 2),
+            "end_value": round(end["total_value"], 2),
+            "deposits": deposits,
+            "withdrawals": withdrawals,
+            "market_gain": market_gain,
+            "return_pct": return_pct,
+            "benchmark_pct": benchmark_pct,
+            "alpha_pct": round(return_pct - benchmark_pct, 2)
+                         if return_pct is not None and benchmark_pct is not None else None,
+            "days": len(pts),
+            "partial_start": partial_start,
+            "unreliable": False,
+        }
+        prev_point = end
+
+    # ── Pre-TWR months: snapshots exist but flows didn't reconcile ───────────
+    first_reliable = min(by_month) if by_month else None
+    pre_groups: dict[str, list] = defaultdict(list)
+    for snap in all_snapshots:
+        m = _month(snap.snapshot_date)
+        if first_reliable is None or m < first_reliable:
+            pre_groups[m].append(snap)
+
+    prev_snap = None
+    for month in sorted(pre_groups):
+        snaps = pre_groups[month]
+        end = snaps[-1]
+        if prev_snap is not None:
+            start_value = prev_snap.total_value or 0
+            flow_dates = [sn.snapshot_date[:10] for sn in snaps]
+        else:
+            start_value = snaps[0].total_value or 0
+            flow_dates = [sn.snapshot_date[:10] for sn in snaps[1:]]
+        deposits, withdrawals = sum_flows(flow_dates)
+        by_month[month] = {
+            "month": month,
+            "start_value": round(start_value, 2),
+            "end_value": round(end.total_value or 0, 2),
+            "deposits": deposits,
+            "withdrawals": withdrawals,
+            "market_gain": None,
+            "return_pct": None,
+            "benchmark_pct": None,
+            "alpha_pct": None,
+            "days": len(snaps),
+            "partial_start": prev_snap is None,
+            "unreliable": True,
+        }
+        prev_snap = end
+
+    return [by_month[m] for m in sorted(by_month)]
+
+
 @router.get("/performance")
 async def analytics_performance(
     flow_threshold_abs: float = 500.0,
@@ -639,21 +800,8 @@ async def analytics_performance(
     The four metrics (unrealized_pnl, realized_pnl, net_pnl, twr_cumulative_return_pct)
     answer different questions and must never be summed or conflated.
     """
-    # ── Fetch snapshots ───────────────────────────────────────────────────────
-    snap_result = await db.execute(
-        select(PortfolioSnapshot)
-        .where(PortfolioSnapshot.user_id == user.id)
-        .order_by(PortfolioSnapshot.snapshot_date, PortfolioSnapshot.created_at)
-    )
-    all_snaps = snap_result.scalars().all()
-
-    # Deduplicate: one row per calendar day, keeping latest created_at
-    day_map: dict[str, object] = {}
-    for s in all_snaps:
-        day = s.snapshot_date[:10]
-        if day not in day_map or (s.created_at and day_map[day].created_at and s.created_at > day_map[day].created_at):
-            day_map[day] = s
-    daily_snaps = sorted(day_map.values(), key=lambda s: s.snapshot_date[:10])
+    # ── Fetch snapshots (one row per calendar day, latest hour wins) ─────────
+    daily_snaps, _ = await _load_snapshots(db, user.id)
 
     # ── Fetch transactions (all types) ────────────────────────────────────────
     tx_result = await db.execute(
@@ -730,10 +878,13 @@ async def analytics_performance(
                         twr["cumulative_return_pct"] - benchmark_cumulative_return_pct, 2
                     )
 
+    monthly = _compute_monthly(twr["series"], transactions, daily_snaps)
+
     return {
         "twr_start_date": twr["twr_start_date"],
         "twr_start_reason": twr["twr_start_reason"],
         "twr_cumulative_return_pct": twr["cumulative_return_pct"],
+        "monthly": monthly,
         "twr_excluded_days": twr.get("excluded_days", []),
         "unrealized_pnl": unrealized_pnl,
         "realized_pnl": realized_pnl,
@@ -749,6 +900,7 @@ async def analytics_performance(
             "net_pnl": "unrealized + realized. Total SAR result across every trade ever made.",
             "twr_cumulative_return_pct": "Time-Weighted Return %. How each riyal invested grew or shrank, independent of deposit timing and size.",
             "benchmark_alpha_pct": "Your TWR minus the S&P 500's return over the same window. Positive means you beat the market.",
+            "monthly": "Per calendar month: market_gain = end − start − deposits + withdrawals (SAR the market made or lost you); return_pct is the chain-linked TWR for that month.",
         },
     }
 

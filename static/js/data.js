@@ -169,28 +169,40 @@
       },
     };
 
-    // ── P&L: enrich by_asset with asset_type from holdings ──────────────────
-    const holdingTypeMap = {};
-    holdings.forEach(h => { holdingTypeMap[h.name] = h.asset_type; });
+    // ── P&L: enrich by_asset with asset_type ─────────────────────────────────
+    // Open positions come from holdings; closed ones from the scoreboard, which
+    // resolves them server-side from snapshot history (was: everything → "Stock").
+    const typeMap = {};
+    (scoreboardRaw || []).forEach(s => { typeMap[s.name] = s.asset_type; });
+    holdings.forEach(h => { typeMap[h.name] = h.asset_type; });
     const pnl = {
       summary: pnlRaw.summary || {},
       by_asset: (pnlRaw.by_asset || []).map(row => ({
         ...row,
-        asset_type: holdingTypeMap[row.name] || "Stock",
+        asset_type: typeMap[row.name] || "Other",
       })),
     };
 
     // ── Overview: safe fallbacks ──────────────────────────────────────────────
+    // total_return_pct is the deposit-adjusted TWR and total_return_sar is net
+    // trade P&L — the same figures /performance reports, so the page agrees
+    // with itself. null (not 0) when there isn't enough history yet.
     const overview = {
-      total_return_pct:     overviewRaw.total_return_pct     || 0,
-      total_return_sar:     overviewRaw.total_return_sar     || (summary.unrealized_pnl || 0) + (summary.realized_pnl || 0),
+      total_return_pct:     overviewRaw.total_return_pct     ?? null,
+      total_return_sar:     overviewRaw.total_return_sar     ?? ((summary.unrealized_pnl || 0) + (summary.realized_pnl || 0)),
+      twr_start_date:       overviewRaw.twr_start_date       || null,
+      current_value:        overviewRaw.current_value        ?? summary.total_value,
       peak_value:           overviewRaw.peak_value           || summary.total_value,
       current_drawdown_pct: overviewRaw.current_drawdown_pct || 0,
       best_month:           overviewRaw.best_month           || { month: null, return_pct: 0 },
       worst_month:          overviewRaw.worst_month          || { month: null, return_pct: 0 },
       total_deposited:      overviewRaw.total_deposited      || 0,
       total_withdrawn:      overviewRaw.total_withdrawn      || 0,
-      win_rate_pct:         overviewRaw.win_rate_pct         || pnl.summary.win_rate_pct || 0,
+      win_rate_pct:         overviewRaw.win_rate_pct         ?? pnl.summary.win_rate_pct ?? 0,
+      winning_sells:        overviewRaw.winning_sells        ?? pnl.summary.winning_sells ?? 0,
+      total_sells:          overviewRaw.total_sells          ?? pnl.summary.total_sells ?? 0,
+      avg_win:              overviewRaw.avg_win              ?? pnl.summary.avg_win ?? 0,
+      avg_loss:             overviewRaw.avg_loss             ?? pnl.summary.avg_loss ?? 0,
     };
 
     // ── Assemble & publish ────────────────────────────────────────────────────
@@ -221,6 +233,7 @@
         net_pnl:                   performanceRaw.net_pnl                   ?? null,
         geo_heuristic:             performanceRaw.geo_classifications_heuristic ?? true,
         series:                    performanceRaw.series                    || [],
+        monthly:                   performanceRaw.monthly                   || [],
         metric_descriptions:       performanceRaw.metric_descriptions       || {},
         benchmark_symbol:              performanceRaw.benchmark_symbol              || null,
         benchmark_cumulative_return_pct: performanceRaw.benchmark_cumulative_return_pct ?? null,

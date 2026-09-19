@@ -13,7 +13,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.routers.analytics import _compute_twr
+from app.routers.analytics import _compute_twr, _compute_monthly
 
 
 # ── Minimal stubs ─────────────────────────────────────────────────────────────
@@ -217,6 +217,96 @@ def test_pure_growth_no_deposits():
     assert abs(result["cumulative_return_pct"] - 15.5) < 0.01
 
 
+# ── Monthly breakdown ─────────────────────────────────────────────────────────
+# Jan: 10000 → 10500 (+5%), no flows.
+# Feb: deposit 5000 on Feb 1 (value 15500), then market +2% → 15810.
+#      market_gain must be +310 (deposit stripped), return_pct +2%.
+# Mar: withdraw 1000 on Mar 1 (14810), then −3% → 14365.7 (gain −444.3)
+
+def test_monthly_breakdown_strips_deposits():
+    snaps = [
+        Snap("2026-01-01", 10000.0, 0.0),
+        Snap("2026-01-15", 10200.0, 0.0),
+        Snap("2026-01-31", 10500.0, 0.0),
+        Snap("2026-02-01", 15500.0, 5000.0),   # deposit 5000, no market move
+        Snap("2026-02-28", 15810.0, 5000.0),   # +2%
+        Snap("2026-03-01", 14810.0, 4000.0),   # withdraw 1000, no market move
+        Snap("2026-03-31", 14365.7, 4000.0),   # −3%
+    ]
+    txs = [
+        Tx("2026-02-01", "DEPOSIT",  5000.0),
+        Tx("2026-03-01", "WITHDRAW", 1000.0),
+    ]
+    twr = _compute_twr(snaps, txs)
+    assert twr["excluded_days"] == [], twr["excluded_days"]
+
+    monthly = _compute_monthly(twr["series"], txs, snaps)
+    assert [m["month"] for m in monthly] == ["2026-01", "2026-02", "2026-03"]
+    jan, feb, mar = monthly
+
+    assert jan["partial_start"] is True
+    assert jan["deposits"] == 0 and jan["withdrawals"] == 0
+    assert abs(jan["market_gain"] - 500.0) < 0.01
+    assert abs(jan["return_pct"] - 5.0) < 0.01
+
+    assert feb["start_value"] == 10500.0
+    assert feb["end_value"] == 15810.0
+    assert feb["deposits"] == 5000.0
+    assert abs(feb["market_gain"] - 310.0) < 0.01, feb["market_gain"]
+    assert abs(feb["return_pct"] - 2.0) < 0.01, feb["return_pct"]
+
+    assert mar["withdrawals"] == 1000.0
+    assert abs(mar["market_gain"] - (-444.3)) < 0.01, mar["market_gain"]
+    assert abs(mar["return_pct"] - (-3.0)) < 0.01, mar["return_pct"]
+    assert all(m["unreliable"] is False for m in monthly)
+
+
+# Months before the TWR start (data-gap window) are listed but carry no return.
+
+def test_monthly_pre_twr_months_flagged_unreliable():
+    snaps = [
+        Snap("2026-01-10", 10000.0, 5000.0),
+        Snap("2026-01-20", 10100.0, 5100.0),   # deposit 8000 recorded, value +100 → BAD
+        Snap("2026-02-01", 18100.0, 13100.0),  # TWR start
+        Snap("2026-02-28", 18281.0, 13100.0),  # +1%
+    ]
+    txs = [Tx("2026-01-20", "DEPOSIT", 8000.0)]
+    twr = _compute_twr(snaps, txs)
+    assert twr["twr_start_date"] == "2026-02-01"
+
+    monthly = _compute_monthly(twr["series"], txs, snaps)
+    assert [m["month"] for m in monthly] == ["2026-01", "2026-02"]
+    jan, feb = monthly
+    assert jan["unreliable"] is True
+    assert jan["return_pct"] is None and jan["market_gain"] is None
+    assert jan["deposits"] == 8000.0          # flows are still reported
+    assert feb["unreliable"] is False
+    assert abs(feb["return_pct"] - 1.0) < 0.01
+    assert abs(feb["market_gain"] - 181.0) < 0.01
+
+
+# Benchmark per month is rebased from the previous month-end point.
+
+def test_monthly_benchmark_pct():
+    snaps = [
+        Snap("2026-01-01", 10000.0, 0.0),
+        Snap("2026-01-31", 10000.0, 0.0),
+        Snap("2026-02-28", 10000.0, 0.0),
+    ]
+    twr = _compute_twr(snaps, [])
+    for pt, bm in zip(twr["series"], [100.0, 110.0, 99.0]):
+        pt["benchmark_index"] = bm
+    monthly = _compute_monthly(twr["series"], [], snaps)
+    jan, feb = monthly
+    assert abs(jan["benchmark_pct"] - 10.0) < 0.01
+    assert abs(feb["benchmark_pct"] - (-10.0)) < 0.01
+    assert abs(feb["alpha_pct"] - 10.0) < 0.01   # flat portfolio vs −10% market
+
+
+def test_monthly_empty():
+    assert _compute_monthly([], [], []) == []
+
+
 if __name__ == "__main__":
     tests = [
         test_twr_worked_example,
@@ -227,6 +317,10 @@ if __name__ == "__main__":
         test_snapshot_deduplication_keeps_latest,
         test_empty_snapshots,
         test_pure_growth_no_deposits,
+        test_monthly_breakdown_strips_deposits,
+        test_monthly_pre_twr_months_flagged_unreliable,
+        test_monthly_benchmark_pct,
+        test_monthly_empty,
     ]
     passed = failed = 0
     for t in tests:

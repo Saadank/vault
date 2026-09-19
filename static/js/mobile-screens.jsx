@@ -664,12 +664,14 @@ const MAnalytics = ({ data, tweaks, navigate, route }) => {
           <div style={{ padding: "0 20px", display: "flex", flexDirection: "column", gap: 14 }}>
             {/* Hero stat */}
             <div className="m-card" style={{ padding: 20, background: "var(--ink)", color: "#f5efe0", borderColor: "var(--ink)" }}>
-              <div className="eyebrow" style={{ color: "var(--accent-2)" }}>All-time return</div>
+              <div className="eyebrow" style={{ color: "var(--accent-2)" }}>True return · deposits stripped out</div>
               <div className="serif" style={{ fontSize: 48, lineHeight: 1, marginTop: 8, color: "#f5efe0" }}>
-                +{overview.total_return_pct.toFixed(1)}<span style={{ fontSize: 28, color: "var(--accent-2)" }}>%</span>
+                {overview.total_return_pct == null
+                  ? "—"
+                  : <>{overview.total_return_pct >= 0 ? "+" : "−"}{Math.abs(overview.total_return_pct).toFixed(1)}<span style={{ fontSize: 28, color: "var(--accent-2)" }}>%</span></>}
               </div>
               <div style={{ marginTop: 4, fontSize: 13, color: "#a89e85" }}>
-                +{F.SAR(overview.total_return_sar)} SAR · realized + unrealized
+                Net P&L {window.VAULT_DATA.fmt.SAR(overview.total_return_sar, { sign: true, decimals: 0 })} SAR · realized + unrealized
               </div>
               <div style={{ height: 1, background: "#2a2316", margin: "16px 0" }} />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -688,13 +690,13 @@ const MAnalytics = ({ data, tweaks, navigate, route }) => {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div className="m-card" style={{ padding: 14 }}>
                 <div className="eyebrow">Best month</div>
-                <div className="serif" style={{ fontSize: 26, marginTop: 4, color: "var(--gain)" }}>+{overview.best_month.return_pct.toFixed(1)}%</div>
-                <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 1, fontFamily: "Geist Mono" }}>{overview.best_month.month}</div>
+                <div className="serif" style={{ fontSize: 26, marginTop: 4, color: "var(--gain)" }}>{overview.best_month.month ? F.PCT(overview.best_month.return_pct, { decimals: 1 }) : "—"}</div>
+                <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 1, fontFamily: "Geist Mono" }}>{overview.best_month.month || "not enough history"}</div>
               </div>
               <div className="m-card" style={{ padding: 14 }}>
                 <div className="eyebrow">Worst month</div>
-                <div className="serif" style={{ fontSize: 26, marginTop: 4, color: "var(--loss)" }}>{overview.worst_month.return_pct.toFixed(1)}%</div>
-                <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 1, fontFamily: "Geist Mono" }}>{overview.worst_month.month}</div>
+                <div className="serif" style={{ fontSize: 26, marginTop: 4, color: "var(--loss)" }}>{overview.worst_month.month ? F.PCT(overview.worst_month.return_pct, { decimals: 1 }) : "—"}</div>
+                <div style={{ fontSize: 11, color: "var(--ink-3)", marginTop: 1, fontFamily: "Geist Mono" }}>{overview.worst_month.month || "not enough history"}</div>
               </div>
             </div>
 
@@ -755,6 +757,53 @@ const MAnalytics = ({ data, tweaks, navigate, route }) => {
                 )}
               </div>
             )}
+
+            {/* Monthly performance — market gain with deposits stripped out */}
+            {performance && performance.monthly && performance.monthly.length > 0 && (() => {
+              const rows = [...performance.monthly].reverse().slice(0, 6);
+              const maxAbs = Math.max(1, ...rows.map(m => Math.abs(m.return_pct || 0)));
+              const label = m => {
+                const [yy, mm] = m.split("-");
+                return new Date(+yy, +mm - 1, 1).toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+              };
+              return (
+                <div className="m-card" style={{ padding: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                    <div className="eyebrow">Monthly · deposits excluded</div>
+                    <span style={{ fontSize: 11, color: "var(--ink-3)" }}>last {rows.length} months</span>
+                  </div>
+                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                    {rows.map(m => {
+                      const v = m.return_pct;
+                      const up = v != null && v >= 0;
+                      return (
+                        <div key={m.month} style={{ display: "grid", gridTemplateColumns: "52px 1fr 64px 76px", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+                          <span style={{ color: "var(--ink-2)", fontVariantNumeric: "tabular-nums" }}>{label(m.month)}</span>
+                          <div style={{ position: "relative", height: 8, background: "var(--paper-2)", borderRadius: 4, overflow: "hidden" }}>
+                            {v != null && (
+                              <div style={{
+                                position: "absolute", top: 0, bottom: 0,
+                                left: up ? "50%" : `${50 - Math.abs(v) / maxAbs * 50}%`,
+                                width: `${Math.abs(v) / maxAbs * 50}%`,
+                                background: up ? "var(--gain)" : "var(--loss)", borderRadius: 4,
+                              }} />
+                            )}
+                            <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "var(--line)" }} />
+                          </div>
+                          <span style={{ textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums",
+                                         color: v == null ? "var(--ink-3)" : up ? "var(--gain)" : "var(--loss)" }}>
+                            {v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}%`}
+                          </span>
+                          <span style={{ textAlign: "right", color: "var(--ink-3)", fontVariantNumeric: "tabular-nums", fontSize: 11.5 }}>
+                            {m.market_gain == null ? "gap" : hidden ? "•••" : `${m.market_gain >= 0 ? "+" : "−"}${F.COMPACT(Math.abs(m.market_gain))}`}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Win rate */}
             <div className="m-card" style={{ padding: 16 }}>

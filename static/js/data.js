@@ -37,6 +37,51 @@
     return Math.round(n).toString();
   }
 
+  // ── Snapshot time helpers ─────────────────────────────────────────────────────
+  // The backend keys hourly snapshots as "YYYY-MM-DD HH" in **UTC**
+  // (datetime.utcnow()). Parse them as UTC so the browser shows them in the
+  // viewer's local time (e.g. "2026-11-09 09" UTC → 12:00 in Riyadh).
+  // Date-only keys ("YYYY-MM-DD") are calendar days — keep them at local midnight.
+  function snapTime(s) {
+    const m = String(s || "").match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}))?/);
+    if (!m) return null;
+    return m[4] !== undefined
+      ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4]))
+      : new Date(+m[1], +m[2] - 1, +m[3]);
+  }
+  // Local calendar day "YYYY-MM-DD" for a snapshot key.
+  function snapLocalDay(s) {
+    const d = snapTime(s);
+    if (!d) return String(s || "").slice(0, 10);
+    const p = n => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+  // Human label: "9 Nov 2026, 12:00" for hourly keys, "9 Nov 2026" for daily ones.
+  function fmtSnap(s) {
+    const d = snapTime(s);
+    if (!d) return String(s || "");
+    const day = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    if (!/[ T]\d/.test(String(s))) return day;
+    return day + ", " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+  // Keep the points inside a time range ending now. Time-based (not point
+  // counts), because chart points are hourly.
+  function filterByRange(points, range) {
+    if (!points || points.length === 0) return [];
+    if (range === "Max") return points;
+    const now = new Date();
+    const cutoff = new Date(now);
+    if      (range === "1D")  cutoff.setHours(now.getHours() - 24);
+    else if (range === "1W")  cutoff.setDate(now.getDate() - 7);
+    else if (range === "1M")  cutoff.setMonth(now.getMonth() - 1);
+    else if (range === "3M")  cutoff.setMonth(now.getMonth() - 3);
+    else if (range === "YTD") { cutoff.setMonth(0, 1); cutoff.setHours(0, 0, 0, 0); }
+    else if (range === "1Y")  cutoff.setFullYear(now.getFullYear() - 1);
+    const filtered = points.filter(p => { const t = snapTime(p.date); return t && t >= cutoff; });
+    return filtered.length > 1 ? filtered : points.slice(-2);
+  }
+  const time = { snapTime, snapLocalDay, fmtSnap, filterByRange };
+
   const fmt = { SAR: fmtSAR, USD: fmtUSD, PCT: fmtPct, COMPACT: fmtCompact };
 
   // ── API helper ───────────────────────────────────────────────────────────────
@@ -127,10 +172,11 @@
     if (Array.isArray(chartRaw) && chartRaw.length >= 2) {
       const lastPt  = chartRaw[chartRaw.length - 1];
       const curr    = lastPt?.value || summary.total_value;
-      const currDay = String(lastPt?.date || "").slice(0, 10);
+      // Compare by the viewer's local day, not the UTC day in the key.
+      const currDay = snapLocalDay(lastPt?.date);
       let baseline  = null;
       for (let i = chartRaw.length - 2; i >= 0; i--) {
-        if (String(chartRaw[i].date).slice(0, 10) < currDay) { baseline = chartRaw[i].value; break; }
+        if (snapLocalDay(chartRaw[i].date) < currDay) { baseline = chartRaw[i].value; break; }
       }
       if (baseline == null) baseline = chartRaw[0]?.value || 0;   // all same day → first point of the day
       summary.day_change_sar = curr - baseline;
@@ -240,6 +286,7 @@
         benchmark_alpha_pct:            performanceRaw.benchmark_alpha_pct           ?? null,
       },
       fmt,
+      time,
     };
 
     return window.VAULT_DATA;
@@ -255,7 +302,8 @@
   }
 
   // Pre-seed fmt so components that reference VAULT_DATA.fmt at parse time work
-  window.VAULT_DATA = { fmt };
+  window.VAULT_DATA = { fmt, time };
+  window.VAULT_TIME = time;
   window.VAULT_LOAD_DATA = loadVaultData;
   window.fetchHoldingHistory = fetchHoldingHistory;
 })();

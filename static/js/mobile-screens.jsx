@@ -179,11 +179,12 @@ const MDashboard = ({ data, tweaks, navigate, openHolding, openBuy, openDeposit,
     [holdings, sortBy]
   );
 
-  const filteredChart = useMemo(() => {
-    const n = chart.length;
-    const slice = { "1D": 7, "1W": 14, "1M": 30, "3M": 90, "1Y": 365, "Max": n }[range] || 30;
-    return chart.slice(Math.max(0, n - slice));
-  }, [chart, range]);
+  // Time-based range: chart points are hourly, so counting points
+  // (1D = 7 points) showed hours, not days.
+  const filteredChart = useMemo(
+    () => window.VAULT_TIME.filterByRange(chart, range),
+    [chart, range]
+  );
 
   const last = filteredChart[filteredChart.length - 1];
   const first = filteredChart[0];

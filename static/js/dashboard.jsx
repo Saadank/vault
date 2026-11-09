@@ -37,12 +37,12 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
     return cutoff.toISOString().slice(0, 10);
   }, [range]);
 
-  const filteredChart = React.useMemo(() => {
-    if (!chart || chart.length === 0) return [];
-    if (!cutoffStr) return chart;
-    const filtered = chart.filter(p => p.date >= cutoffStr);
-    return filtered.length > 1 ? filtered : chart.slice(-2);
-  }, [chart, cutoffStr]);
+  // Value chart: hourly UTC keys, so filter by real elapsed time.
+  // (cutoffStr above is still used for the daily Growth series.)
+  const filteredChart = React.useMemo(
+    () => window.VAULT_TIME.filterByRange(chart, range),
+    [chart, range]
+  );
 
   // Growth view: the daily TWR series rebased to 0% at the start of the range.
   // Deposits/withdrawals are stripped out, so the line only moves when the
@@ -131,15 +131,15 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
             {isGrowth ? (
               // Growth view: how the investments themselves did, deposits stripped out
               <div className="row gap-10 dim" style={{ fontSize: 12.5, marginTop: 4 }}>
-                <span className="mono">{showPt.date}</span>
+                <span className="mono">{window.VAULT_TIME.fmtSnap(showPt.date)}</span>
                 <span>·</span>
                 {/* "Max" is the range button's name, not "maximum" — spell out
                     the window so "Max return +6.8%" can't read as a peak. */}
                 <span>
                   {range === "Max"
-                    ? <>return since <span className="mono">{growthStats.from}</span></>
+                    ? <>return since <span className="mono">{window.VAULT_TIME.fmtSnap(growthStats.from)}</span></>
                     : <>{range} return</>}
-                  {hoverPt && <> to <span className="mono">{showPt.date}</span></>}
+                  {hoverPt && <> to <span className="mono">{window.VAULT_TIME.fmtSnap(showPt.date)}</span></>}
                   {" "}<Delta className="" value={hoverPt ? hoverPt.value : growthStats.returnPct} suffix="%" />
                   {" "}<span style={{ opacity: 0.7 }}>excl. deposits</span>
                 </span>
@@ -166,7 +166,7 @@ const Dashboard = ({ data, tweaks, setRoute, openSell, openCapInc, openUpdatePri
               </div>
             ) : (
               <div className="row gap-10 dim" style={{ fontSize: 12.5, marginTop: 4 }}>
-                <span className="mono">{showPt.date}</span>
+                <span className="mono">{window.VAULT_TIME.fmtSnap(showPt.date)}</span>
                 <span>·</span>
                 <span>{range} change <Delta className="" value={rangeChangePct} suffix="%" /></span>
                 <span>·</span>

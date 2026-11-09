@@ -1,7 +1,7 @@
 // VAULT — Service Worker
 // Cache-first for static assets, network-first for API calls.
 
-const CACHE = "vault-v11";
+const CACHE = "vault-v12";
 const STATIC = [
   "/",
   "/static/css/design-system.css",

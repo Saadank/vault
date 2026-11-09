@@ -56,13 +56,9 @@ const AreaChart = ({ data, height = 280, accent = "var(--accent)", showAxes = tr
     if (v >= 1e3) return Math.round(v / 1e3) + "K";
     return Math.round(v).toString();
   };
-  // Snapshot dates look like "2026-04-23 08" or "2026-04-23" — parse both.
-  // (new Date("2026-04-23T08") is invalid: ISO needs HH:mm, so parse by hand.)
-  const parseDate = s => {
-    const m = String(s).match(/(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}))?/);
-    if (!m) return null;
-    return new Date(+m[1], +m[2] - 1, +m[3], m[4] ? +m[4] : 0);
-  };
+  // Snapshot dates look like "2026-04-23 08" (hour in UTC) or "2026-04-23".
+  // snapTime parses the hour as UTC so labels show the viewer's local time.
+  const parseDate = s => window.VAULT_TIME.snapTime(s);
   // Choose axis label resolution from the total span of the data.
   const spanDays = (() => {
     const a = parseDate(data[0].date), b = parseDate(data[data.length - 1].date);
@@ -164,7 +160,7 @@ const AreaChart = ({ data, height = 280, accent = "var(--accent)", showAxes = tr
             fontVariantNumeric: "tabular-nums",
             whiteSpace: "nowrap",
           }}>
-            <div style={{ opacity: 0.6, fontSize: 11, fontFamily: "Geist Mono, monospace" }}>{data[hoverIdx].date}</div>
+            <div style={{ opacity: 0.6, fontSize: 11, fontFamily: "Geist Mono, monospace" }}>{window.VAULT_TIME.fmtSnap(data[hoverIdx].date)}</div>
             {isPct ? (
               <>
                 <div style={{ fontFamily: "Instrument Serif, serif", fontSize: 20, lineHeight: 1.1, marginTop: 2,

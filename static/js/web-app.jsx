@@ -185,6 +185,9 @@ function WebApp() {
             {route === "transactions" && (
               <Transactions data={data} onReload={loadData} />
             )}
+            {route === "reports" && (
+              <Reports onRefreshPrices={handleRefresh} />
+            )}
           </main>
         </div>
       </div>
@@ -304,7 +307,7 @@ function WebApp() {
         </TweakSection>
         <TweakSection label="Jump to">
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-            {["dashboard", "analytics", "transactions"].map(s => (
+            {["dashboard", "analytics", "transactions", "reports"].map(s => (
               <TweakButton key={s} label={s.charAt(0).toUpperCase() + s.slice(1)} secondary onClick={() => setRoute(s)} />
             ))}
           </div>

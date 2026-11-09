@@ -189,3 +189,28 @@ class BenchmarkSnapshot(Base):
     __table_args__ = (
         UniqueConstraint("symbol", "snapshot_date", name="uq_benchmark_symbol_day"),
     )
+
+
+class DailyReport(Base):
+    """
+    Archived daily report — the full report payload frozen as JSON, one row per
+    user per day. Upserted hourly (last write wins, like HoldingSnapshot) and
+    again when the 23:55 report goes out, so each day converges to its close.
+    Summary columns are duplicated out of the payload for cheap listing.
+    """
+    __tablename__ = "daily_reports"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    user_id        = Column(Integer, ForeignKey("users.id"), nullable=False)
+    report_date    = Column(String(10), nullable=False)   # YYYY-MM-DD
+    total_value    = Column(Float, nullable=False)
+    day_change_sar = Column(Float, nullable=False, default=0.0)
+    day_change_pct = Column(Float, nullable=False, default=0.0)
+    movers_count   = Column(Integer, nullable=False, default=0)
+    payload        = Column(Text, nullable=False)          # JSON — see report_service.serialize_report
+    created_at     = Column(DateTime, default=datetime.utcnow)
+    updated_at     = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "report_date", name="uq_daily_report_user_day"),
+    )

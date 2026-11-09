@@ -30,11 +30,12 @@ os.makedirs("static", exist_ok=True)
 
 from app.database import init_db, SessionLocal, User
 # auth middleware no longer needed for page routes (SPA handles it)
-from app.routers import auth, portfolio, cash, prices, chat, analytics, ocr
+from app.routers import auth, portfolio, cash, prices, chat, analytics, ocr, reports
 from app.routers.prices import (
     _take_hourly_snapshot, _refresh_holding_prices, _take_holding_snapshot,
     _record_price_history, _record_benchmark_snapshot,
 )
+from app.report_service import save_daily_report
 from sqlalchemy import select
 
 # Show INFO logs from our app modules in the uvicorn console
@@ -63,6 +64,13 @@ async def _hourly_snapshot_loop():
                     await _record_benchmark_snapshot(db)
                 except Exception as e:
                     logger.warning(f"Benchmark snapshot failed: {e}")
+                # Archive each user's report for today (last write wins → the
+                # day's row converges to its close, even if 23:55 is missed).
+                for user in users:
+                    try:
+                        await save_daily_report(user.id)
+                    except Exception as e:
+                        logger.warning(f"Report archive failed for user {user.id}: {e}")
         except Exception as e:
             logger.error(f"Hourly snapshot loop error: {e}")
 
@@ -136,6 +144,7 @@ app.include_router(prices.router)
 app.include_router(chat.router)
 app.include_router(analytics.router)
 app.include_router(ocr.router)
+app.include_router(reports.router)
 
 
 # ── SPA shell ─────────────────────────────────────────────────────────────────
@@ -172,6 +181,9 @@ async def analytics_page(request: Request): return _spa(request)
 
 @app.get("/transactions", response_class=HTMLResponse)
 async def transactions_page(request: Request): return _spa(request)
+
+@app.get("/reports",      response_class=HTMLResponse)
+async def reports_page(request: Request):  return _spa(request)
 
 # ── Force-preview routes (bypass UA detection) ────────────────────────────────
 @app.get("/mobile",       response_class=HTMLResponse)

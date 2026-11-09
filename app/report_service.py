@@ -10,6 +10,7 @@ Required environment variables:
 import asyncio
 import base64
 import io
+import json
 import logging
 import os
 from collections import defaultdict
@@ -37,6 +38,7 @@ from sqlalchemy import func, select
 
 from app.database import (
     CashBalance,
+    DailyReport,
     Holding,
     HoldingSnapshot,
     PortfolioSnapshot,
@@ -195,6 +197,7 @@ async def _collect(db, user_id: int) -> dict:
         upct  = (upnl / cv * 100) if cv else 0.0
         holding_rows.append({
             "name": h.name,
+            "ticker": h.ticker,
             "asset_type": h.asset_type,
             "quantity": h.quantity,
             "avg_cost": h.avg_cost,
@@ -277,10 +280,19 @@ async def _collect(db, user_id: int) -> dict:
     )
     recent_txs = tx_res.scalars().all()
 
+    # Everything booked on the report date — what the archive shows as "that day"
+    td_res = await db.execute(
+        select(Transaction)
+        .where(Transaction.user_id == user_id, Transaction.tx_date == today_str)
+        .order_by(Transaction.created_at)
+    )
+    today_txs = td_res.scalars().all()
+
     return {
         "user":            user,
-        "report_date":     date.today().strftime("%B %d, %Y"),
-        "report_weekday":  date.today().strftime("%A"),
+        "report_iso":      today_str,
+        "report_date":     report_dt.strftime("%B %d, %Y"),
+        "report_weekday":  report_dt.strftime("%A"),
         "total_value":     total_val,
         "portfolio_value": port_val,
         "total_invested":  invested,
@@ -302,7 +314,103 @@ async def _collect(db, user_id: int) -> dict:
         "best_month":          best_month,
         "worst_month":         worst_month,
         "recent_txs":          recent_txs,
+        "today_txs":           today_txs,
     }
+
+
+# ── JSON payload + archive ────────────────────────────────────────────────────
+def _tx_dict(t) -> dict:
+    return {
+        "tx_date":      t.tx_date or (t.created_at.strftime("%Y-%m-%d") if t.created_at else None),
+        "tx_type":      t.tx_type,
+        "asset_name":   t.asset_name,
+        "quantity":     t.quantity,
+        "price":        t.price,
+        "total":        t.total,
+        "realized_pnl": t.realized_pnl,
+    }
+
+
+def serialize_report(data: dict) -> dict:
+    """JSON-safe form of ``_collect()`` output — what the Reports page renders
+    and what gets frozen into ``daily_reports.payload``.
+
+    Each holding row also carries its own day move (``day_pct`` / ``day_sar``)
+    joined from the movers; ``day_pct`` is None when that holding's market did
+    not trade on the report date.
+    """
+    movers_by_name = {m["name"]: m for m in data["daily_movers"]}
+    holdings = []
+    for r in data["holding_rows"]:
+        m = movers_by_name.get(r["name"])
+        holdings.append({
+            **r,
+            "prev_price": m["prev_price"] if m else None,
+            "day_pct":    m["daily_pct"] if m else None,
+            "day_sar":    m["daily_sar"] if m else None,
+        })
+    return {
+        "report_date":          data["report_iso"],
+        "report_weekday":       data["report_weekday"],
+        "generated_at":         datetime.utcnow().isoformat() + "Z",
+        "total_value":          data["total_value"],
+        "portfolio_value":      data["portfolio_value"],
+        "cash_balance":         data["cash_balance"],
+        "total_invested":       data["total_invested"],
+        "unrealized_pnl":       data["unrealized_pnl"],
+        "unrealized_pct":       data["unrealized_pct"],
+        "realized_pnl":         data["realized_pnl"],
+        "positions_count":      data["positions_count"],
+        "day_change_sar":       data["day_change_sar"],
+        "day_change_pct":       data["day_change_pct"],
+        "movers_count":         data["movers_count"],
+        "daily_movers":         data["daily_movers"],
+        "holdings":             holdings,
+        "allocation":           data["allocation"],
+        "total_return_sar":     data["total_return_sar"],
+        "total_return_pct":     data["total_return_pct"],
+        "peak_value":           data["peak_value"],
+        "current_drawdown_pct": data["current_drawdown_pct"],
+        "best_month":           list(data["best_month"]) if data["best_month"] else None,
+        "worst_month":          list(data["worst_month"]) if data["worst_month"] else None,
+        "today_txs":            [_tx_dict(t) for t in data["today_txs"]],
+    }
+
+
+async def _archive(db, user_id: int, payload: dict) -> None:
+    """Upsert the user's report row for ``payload['report_date']`` (last write wins)."""
+    res = await db.execute(
+        select(DailyReport).where(
+            DailyReport.user_id == user_id,
+            DailyReport.report_date == payload["report_date"],
+        )
+    )
+    row = res.scalar_one_or_none()
+    if row is None:
+        row = DailyReport(user_id=user_id, report_date=payload["report_date"])
+        db.add(row)
+    row.total_value    = payload["total_value"]
+    row.day_change_sar = payload["day_change_sar"]
+    row.day_change_pct = payload["day_change_pct"]
+    row.movers_count   = payload["movers_count"]
+    row.payload        = json.dumps(payload)
+    await db.commit()
+
+
+async def build_live_report(db, user_id: int) -> dict:
+    """The report as it stands right now — nothing is saved."""
+    return serialize_report(await _collect(db, user_id))
+
+
+async def save_daily_report(user_id: int) -> dict | None:
+    """Collect the report now and archive it under today's date."""
+    async with SessionLocal() as db:
+        data = await _collect(db, user_id)
+        if not data["user"]:
+            return None
+        payload = serialize_report(data)
+        await _archive(db, user_id, payload)
+    return payload
 
 
 # ── PDF builder ───────────────────────────────────────────────────────────────
@@ -760,6 +868,9 @@ async def send_daily_report(user_id: int) -> None:
     """Collect data, render PDF, and email it to the user."""
     async with SessionLocal() as db:
         data = await _collect(db, user_id)
+        if data["user"]:
+            # Archive exactly what is being emailed, so the Reports page matches the inbox.
+            await _archive(db, user_id, serialize_report(data))
 
     if not data["user"]:
         logger.warning(f"User {user_id} not found — skipping report")

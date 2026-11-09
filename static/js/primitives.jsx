@@ -21,6 +21,10 @@ const Icon = ({ name, size = 18, className, style }) => {
     transactions: <>
       <path d="M4 7h13l-3-3M20 17H7l3 3" />
     </>,
+    reports: <>
+      <path d="M6 3h9l4 4v14H6z" />
+      <path d="M15 3v4h4M9 17v-3M12 17v-5M15 17v-2" />
+    </>,
     settings: <>
       <circle cx="12" cy="12" r="3" />
       <path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2-1.2L14 3h-4l-.6 2.7a7 7 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2 1.2L10 21h4l.6-2.7a7 7 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2Z" />
@@ -141,6 +145,7 @@ const Sidebar = ({ route, setRoute, onLogout, user }) => {
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
     { id: "analytics", label: "Analytics", icon: "analytics" },
     { id: "transactions", label: "Transactions", icon: "transactions" },
+    { id: "reports", label: "Reports", icon: "reports" },
   ];
   return (
     <aside className="sidebar">
@@ -193,6 +198,7 @@ const TopNav = ({ route, setRoute }) => {
     { id: "dashboard", label: "Dashboard", icon: "dashboard" },
     { id: "analytics", label: "Analytics", icon: "analytics" },
     { id: "transactions", label: "Transactions", icon: "transactions" },
+    { id: "reports", label: "Reports", icon: "reports" },
   ];
   return (
     <div className="topnav">
